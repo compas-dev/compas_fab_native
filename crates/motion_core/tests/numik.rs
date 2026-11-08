@@ -109,7 +109,7 @@ fn free_axis_keeps_only_the_tool_axis() {
             tcf: IDENTITY,
             free_axis: true,
         };
-        let solutions = solver.solve(&goal, &[qb.clone()], &settings, &|_| true);
+        let solutions = solver.solve(&goal, std::slice::from_ref(&qb), &settings, &|_| true);
         assert!(!solutions.is_empty());
         for s in &solutions {
             let f = forward_kinematics(&model, s)[model.end_effector_link];
