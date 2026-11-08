@@ -14,18 +14,34 @@ fn robot(name: &str) -> RobotModel {
 }
 
 /// The yes/no checker and the distance kernel agree on every configuration whose clearance
-/// is not within rounding of zero.
+/// is not within rounding of zero, touch rules included: a floor the robot stands on, with
+/// the spheres that always touch it exempted (`auto_touch_spheres`) and a box the base link
+/// may touch.
 #[test]
 fn checker_agrees_with_the_distance_kernel() {
     let mut model = robot("ur5.json");
     model.disable_always_colliding(500, 0.95, 7);
-    let scene = load_scene(&fixture("scene_boxes.json")).unwrap();
+    let mut scene = load_scene(&fixture("scene_boxes.json")).unwrap();
+    scene.cuboids.truncate(1); // the full fixture scene leaves almost no random config free
+    let identity = |z: f64| [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, z];
+    scene.cuboids.push(motion_core::model::Cuboid {
+        name: "floor".into(),
+        // Top 3 cm below the base: the fitted upper-arm spheres dip below the base in most
+        // configurations (not the 95% that would exempt them).
+        frame: identity(-0.04),
+        half_extents: [2.0, 2.0, 0.01],
+        touch_links: vec![],
+    });
+    scene.cuboids.push(motion_core::model::Cuboid {
+        name: "plinth".into(),
+        frame: identity(0.02),
+        half_extents: [0.1, 0.1, 0.05],
+        touch_links: model.links[..3].iter().map(|l| l.name.clone()).collect(),
+    });
+    let exempted = scene.auto_touch_spheres(&model, 500, 0.95, 8);
+    assert!(!exempted.is_empty());
     let buffers = ModelBuffers::new(&model, &scene);
-    let mut obstacles = Obstacles::default();
-    for c in &scene.cuboids {
-        obstacles.add_box(&c.frame, c.half_extents);
-    }
-    let checker = Checker::new(&model, obstacles);
+    let checker = Checker::new(&model, Obstacles::from_scene(&model, &scene));
     let n = 4096;
     let q64 = random_configurations(&model, n, 5);
     let q: Vec<f32> = q64.iter().map(|&v| v as f32).collect();
@@ -46,7 +62,10 @@ fn checker_agrees_with_the_distance_kernel() {
         compared += 1;
         colliding += (min[b] < 0.0) as usize;
     }
-    assert!(compared > n - 10 && colliding > 100 && colliding < compared - 100);
+    assert!(
+        compared > n - 10 && colliding > 100 && compared - colliding > 100,
+        "{compared} compared, {colliding} colliding"
+    );
 }
 
 /// Lanes of one call agree with single-configuration calls.

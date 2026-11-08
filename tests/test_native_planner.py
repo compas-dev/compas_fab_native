@@ -184,3 +184,110 @@ def test_cartesian_from_the_start_state_returns_one_point_per_waypoint(ur5):
     trajectory = planner.plan_cartesian_motion(waypoints, start, options={"start_from_state": True})
     assert len(trajectory.points) == len(frames)
     assert trajectory.start_configuration.close_to(start.robot_configuration)
+
+
+# -- plan_motion --------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def ur5_wall():
+    cell, _ = RobotCellLibrary.ur5()
+    cell.rigid_body_models["wall"] = RigidBody.from_mesh(Box(0.05, 0.8, 0.8).to_mesh(triangulated=True))
+    state = cell.default_cell_state()
+    state.rigid_body_states["wall"] = RigidBodyState(Frame([0.45, 0.0, 0.4], [1, 0, 0], [0, 1, 0]))
+    planner = NativePlanner(UR5Kinematics())
+    planner.set_robot_cell(cell, state)
+    return planner, cell, state
+
+
+def _configuration(cell, values):
+    config = cell.zero_configuration()
+    config.joint_values = values
+    return config
+
+
+def _assert_free_path(planner, trajectory):
+    core = planner.client.core
+    path = [trajectory.start_configuration.joint_values[: core.dof]] + [p.joint_values for p in trajectory.points]
+    # Every segment free on the spheres at 4x the planning resolution, every 0.01 rad on the meshes.
+    for a, b in zip(path, path[1:]):
+        assert core.motion_free(a, b, 4 * core.default_resolution)
+    dense = []
+    for a, b in zip(path, path[1:]):
+        n = max(1, int(math.ceil(max(abs(x - y) for x, y in zip(a, b)) / 0.01)))
+        dense += [[x + (y - x) * k / n for x, y in zip(a, b)] for k in range(n + 1)]
+    assert all(c is None for c in core.exact_check(dense))
+
+
+def test_plan_motion_around_a_wall(ur5_wall):
+    from compas_fab.robots import ConfigurationTarget
+
+    planner, cell, state = ur5_wall
+    start = state.copy()
+    start.robot_configuration = _configuration(cell, [-1.2, -1.2, 1.4, -1.8, -1.57, 0.0])
+    goal = _configuration(cell, [1.2, -1.2, 1.4, -1.8, -1.57, 0.0])
+    assert not planner.client.core.motion_free(start.robot_configuration.joint_values, goal.joint_values)
+    trajectory = planner.plan_motion(ConfigurationTarget(goal), start)
+    assert trajectory.start_configuration.close_to(start.robot_configuration)
+    assert trajectory.points[-1].close_to(goal)
+    assert len(trajectory.points) >= 2  # had to go around
+    _assert_free_path(planner, trajectory)
+
+
+def test_plan_motion_to_frame_and_point_axis_targets(ur5_wall):
+    from compas.geometry import Point
+    from compas.geometry import Vector
+
+    from compas_fab.robots import PointAxisTarget
+
+    planner, cell, state = ur5_wall
+    start = state.copy()
+    start.robot_configuration = _configuration(cell, [-1.2, -1.2, 1.4, -1.8, -1.57, 0.0])
+    frame = Frame([0.3, 0.35, 0.3], [1, 0, 0], [0, -1, 0])
+    trajectory = planner.plan_motion(FrameTarget(frame, TargetMode.ROBOT), start)
+    end = start.copy()
+    end.robot_configuration = cell.zero_configuration().merged(trajectory.points[-1])
+    assert frames_close(planner.forward_kinematics(end, TargetMode.ROBOT), frame)
+    _assert_free_path(planner, trajectory)
+
+    target = PointAxisTarget(Point(0.3, -0.35, 0.3), Vector(0, 0, -1), TargetMode.ROBOT)
+    trajectory = planner.plan_motion(target, start, options={"axis_samples": 8})
+    end.robot_configuration = cell.zero_configuration().merged(trajectory.points[-1])
+    reached = planner.forward_kinematics(end, TargetMode.ROBOT)
+    assert reached.point.distance_to_point(target.target_point) < 1e-6
+    assert reached.zaxis.dot(target.target_z_axis) > 1 - 1e-9
+
+
+def test_plan_motion_seven_axis_panda():
+    from compas_fab.robots import ConfigurationTarget
+
+    cell, _ = RobotCellLibrary.panda()
+    cell.rigid_body_models["post"] = RigidBody.from_mesh(Box(0.1, 0.1, 1.2).to_mesh(triangulated=True))
+    state = cell.default_cell_state()
+    state.rigid_body_states["post"] = RigidBodyState(Frame([0.45, 0.0, 0.6], [1, 0, 0], [0, 1, 0]))
+    planner = NativePlanner()  # no IK needed for configuration targets
+    planner.set_robot_cell(cell, state)
+    assert planner.client.core.dof == 7
+    start = state.copy()
+    start.robot_configuration = start.robot_configuration.merged(_configuration(cell, [-1.2, 0.3, 0.0, -2.0, 0.0, 2.3, 0.8]))
+    goal = _configuration(cell, [1.2, 0.3, 0.0, -2.0, 0.0, 2.3, 0.8])
+    trajectory = planner.plan_motion(ConfigurationTarget(goal), start)
+    assert trajectory.points[-1].close_to(goal)
+    _assert_free_path(planner, trajectory)
+
+
+def test_plan_motion_reports_colliding_start_and_goal(ur5_wall):
+    from compas_fab.backends import MPStartStateInCollisionError
+    from compas_fab.backends import MPTargetInCollisionError
+    from compas_fab.robots import ConfigurationTarget
+
+    planner, cell, state = ur5_wall
+    free = _configuration(cell, [-1.2, -1.2, 1.4, -1.8, -1.57, 0.0])
+    into_wall = _configuration(cell, [0.0, -0.6, 0.6, -1.5, -1.57, 0.0])
+    start = state.copy()
+    start.robot_configuration = into_wall
+    with pytest.raises(MPStartStateInCollisionError):
+        planner.plan_motion(ConfigurationTarget(free), start)
+    start.robot_configuration = free
+    with pytest.raises(MPTargetInCollisionError):
+        planner.plan_motion(ConfigurationTarget(into_wall), start)

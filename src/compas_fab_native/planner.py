@@ -1,16 +1,18 @@
 """Native motion core as a compas_fab planner (spike).
 
-``NativePlanner`` runs forward and inverse kinematics, collision checks and Cartesian
-planning in the Rust core (``compas_fab_native``). User code switches to it by changing
-the planner:
+``NativePlanner`` runs forward and inverse kinematics, collision checks, Cartesian and
+free-space planning in the Rust core (``compas_fab_native``). User code switches to it by
+changing the planner:
 
     planner = NativePlanner(UR5Kinematics())
     planner.set_robot_cell(robot_cell, robot_cell_state)
     trajectory = planner.plan_cartesian_motion(waypoints, start_state)
+    trajectory = planner.plan_motion(target, start_state)
 
-Limits of the spike: closed-form IK only (offset-wrist arms), static obstacles as
-oriented bounding boxes, attached tools as spheres on the end-effector link, attached
-workpieces ignored.
+Limits of the spike: closed-form IK only (UR arms, spherical-wrist arms), so frame targets
+and Cartesian paths need a 6-axis arm; ``plan_motion`` to a ConfigurationTarget works for
+any serial robot. Obstacles are boxes or distance fields, attached tools are supported,
+attached workpieces are ignored.
 """
 
 import json
@@ -23,19 +25,26 @@ from compas_robots import Configuration
 
 from compas_fab.backends.exceptions import CollisionCheckError
 from compas_fab.backends.exceptions import InverseKinematicsError
+from compas_fab.backends.exceptions import MPNoIKSolutionError
+from compas_fab.backends.exceptions import MPNoPlanFoundError
+from compas_fab.backends.exceptions import MPStartStateInCollisionError
+from compas_fab.backends.exceptions import MPTargetInCollisionError
 from compas_fab.backends.interfaces import ClientInterface
 from compas_fab.backends.interfaces import PlannerInterface
 from compas_fab.backends.interfaces.backend_features import CheckCollision
 from compas_fab.backends.interfaces.backend_features import ForwardKinematics
 from compas_fab.backends.interfaces.backend_features import InverseKinematics
 from compas_fab.backends.interfaces.backend_features import PlanCartesianMotion
+from compas_fab.backends.interfaces.backend_features import PlanMotion
 from compas_fab.backends.interfaces.backend_features import SetRobotCell
 from compas_fab.backends.interfaces.backend_features import SetRobotCellState
 from compas_fab.backends.kinematics.exceptions import CartesianMotionError
+from compas_fab.robots import ConfigurationTarget
 from compas_fab.robots import FrameTarget
 from compas_fab.robots import FrameWaypoints
 from compas_fab.robots import JointTrajectory
 from compas_fab.robots import JointTrajectoryPoint
+from compas_fab.robots import PointAxisTarget
 from compas_fab.robots import TargetMode
 
 from .model import add_attached_tools
@@ -79,6 +88,7 @@ class NativePlanner(
     InverseKinematics,
     CheckCollision,
     PlanCartesianMotion,
+    PlanMotion,
     PlannerInterface,
 ):
     """Planner backed by the native (Rust) motion core.
@@ -327,3 +337,130 @@ class NativePlanner(
         trajectory.start_state = start_state
         trajectory.attributes["native_stats"] = stats
         return trajectory
+
+    # -- PlanMotion ---------------------------------------------------------------------------
+
+    def plan_motion(self, target, start_state, group=None, options=None):
+        """Collision-free joint-space motion from ``start_state`` to ``target``.
+
+        The straight joint-space motion is tried first, then RRT-Connect from the start and
+        from every goal at once, then shortcutting and B-spline smoothing. The result is
+        checked on the exact meshes and re-planned with another seed if it touches them.
+
+        Targets
+        -------
+        ConfigurationTarget
+            One goal.
+        FrameTarget
+            Every IK solution is a goal; the planner picks whichever it reaches.
+        PointAxisTarget
+            IK solutions of ``axis_samples`` rotations about the axis.
+
+        Options
+        -------
+        range : float
+            Longest tree extension, in joint-space distance. Default 1.0.
+        resolution : float
+            Collision checks per unit of joint-space distance. Default: enough that no robot
+            sphere moves more than about 2 cm between checks (``core.default_resolution``).
+        max_iterations : int
+            Default 100000.
+        seed : int
+            Sampling sequence offset, for different (reproducible) paths. Default 0.
+        simplify : bool
+            Shortcut and smooth the path. Default True.
+        exact_check : bool
+            Validate the path on the exact meshes. Default True.
+        exact_step : float
+            Largest joint change between exact checks (rad). Default 0.02.
+        axis_samples : int
+            Rotations sampled about a PointAxisTarget's axis. Default 16.
+        max_joint_step : float
+            If given, interpolate the path so no joint moves more than this between points.
+            Default: the path's vertices only.
+        """
+        options = options or {}
+        client: NativeClient = self.client
+        group = group or client.group
+        self._sync_state(start_state)
+        if not start_state.robot_configuration:
+            raise ValueError("start_state.robot_configuration must be provided.")
+        start = self._group_values(start_state.robot_configuration)
+        goals = self._motion_goals(target, start_state, group, options)
+        try:
+            path, stats = client.core.plan_motion(
+                start,
+                goals,
+                range=float(options.get("range", 1.0)),
+                resolution=options.get("resolution"),
+                max_iterations=int(options.get("max_iterations", 100000)),
+                seed=int(options.get("seed", 0)),
+                simplify=bool(options.get("simplify", True)),
+                exact=bool(options.get("exact_check", True)) and client.core.has_exact,
+                exact_step=float(options.get("exact_step", 0.02)),
+            )
+        except RuntimeError as e:
+            message = str(e)
+            if message.startswith("start_in_collision"):
+                raise MPStartStateInCollisionError("The start configuration is in collision.", start_state=start_state)
+            if message.startswith("goals_in_collision"):
+                raise MPTargetInCollisionError("Every goal configuration of the target is in collision.", target=target)
+            raise MPNoPlanFoundError("No path found: {}".format(message))
+        step = options.get("max_joint_step")
+        if step:
+            path = _densify(path, float(step))
+        joint_names = client.core.joint_names
+        joint_types = client.robot_cell.get_configurable_joint_types(group)
+        trajectory = JointTrajectory()
+        trajectory.joint_names = joint_names
+        # The start configuration is the trajectory's start, not its first point.
+        trajectory.points = [JointTrajectoryPoint(q, joint_types, joint_names=joint_names) for q in path[1:]]
+        trajectory.fraction = 1.0
+        trajectory.start_configuration = client.robot_cell.zero_full_configuration().merged(self._configuration(path[0]))
+        trajectory.start_state = start_state
+        trajectory.attributes["native_stats"] = stats
+        return trajectory
+
+    def _motion_goals(self, target, start_state, group, options):
+        """Goal configurations (group joint values) of a motion target."""
+        if isinstance(target, ConfigurationTarget):
+            return [self._group_values(target.target_configuration)]
+        if isinstance(target, FrameTarget):
+            frame_targets = [target]
+        elif isinstance(target, PointAxisTarget):
+            target = target.normalized_to_meters()
+            z = target.target_z_axis
+            # Any x axis perpendicular to z, then rotated about z.
+            helper = [1.0, 0.0, 0.0] if abs(z[0]) < 0.9 else [0.0, 1.0, 0.0]
+            x0 = np.cross(z, helper)
+            x0 /= np.linalg.norm(x0)
+            y0 = np.cross(z, x0)
+            n = int(options.get("axis_samples", 16))
+            frame_targets = []
+            for k in range(n):
+                a = 2 * np.pi * k / n
+                x = np.cos(a) * x0 + np.sin(a) * y0
+                y = np.cross(z, x)
+                frame_targets.append(FrameTarget(Frame(target.target_point, x.tolist(), y.tolist()), target.target_mode))
+        else:
+            raise NotImplementedError("NativePlanner.plan_motion supports ConfigurationTarget, FrameTarget and PointAxisTarget.")
+        goals = []
+        for frame_target in frame_targets:
+            try:
+                configs = self.iter_inverse_kinematics(frame_target, start_state, group, {"check_collision": False})
+                goals.extend(self._group_values(c) for c in configs)
+            except InverseKinematicsError:
+                continue
+        if not goals:
+            raise MPNoIKSolutionError("No IK solution for the target.", target=target)
+        return goals
+
+
+def _densify(path, step):
+    out = [list(path[0])]
+    for a, b in zip(path, path[1:]):
+        n = max(1, int(np.ceil(max(abs(x - y) for x, y in zip(a, b)) / step)))
+        for k in range(1, n + 1):
+            t = k / n
+            out.append([x + t * (y - x) for x, y in zip(a, b)])
+    return out

@@ -72,7 +72,11 @@ def collision_items(collisions):
     for collision in collisions:
         shape = collision.geometry.shape
         t = np.array(Transformation.from_frame(collision.origin).matrix) if collision.origin else np.eye(4)
-        scale = getattr(shape, "scale", None) or [1.0, 1.0, 1.0]
+        # Mesh descriptors carry a scale vector; primitives (Box, Cylinder, ...) have a
+        # `scale` method instead and are already in link units.
+        scale = getattr(shape, "scale", None)
+        if callable(scale) or not scale:
+            scale = [1.0, 1.0, 1.0]
         for mesh in getattr(shape, "meshes", None) or []:
             items.append((mesh, t, scale))
     return items

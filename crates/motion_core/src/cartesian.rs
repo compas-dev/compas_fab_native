@@ -108,17 +108,19 @@ fn step(a: &Config, b: &Config) -> f64 {
     (0..6).map(|j| (a[j] - b[j]).abs()).fold(0.0, f64::max)
 }
 
-/// Collision-check configurations (f64, row-major) on the CPU lanes kernel; returns clearances.
-pub fn check_configs(buffers: &ModelBuffers, configs: &[Config]) -> Vec<f32> {
+/// Collision-check configurations (f64, `buffers.dof` values each) on the CPU lanes kernel;
+/// returns clearances.
+pub fn check_configs<C: AsRef<[f64]>>(buffers: &ModelBuffers, configs: &[C]) -> Vec<f32> {
     let n = configs.len();
     if n == 0 {
         return Vec::new();
     }
+    let dof = buffers.dof;
     let batch = n.div_ceil(LANES) * LANES;
-    let mut q = vec![0.0f32; 6 * batch];
+    let mut q = vec![0.0f32; dof * batch];
     for b in 0..batch {
-        let c = &configs[b.min(n - 1)];
-        for j in 0..6 {
+        let c = configs[b.min(n - 1)].as_ref();
+        for j in 0..dof {
             q[j * batch + b] = c[j] as f32;
         }
     }

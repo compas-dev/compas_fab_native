@@ -31,7 +31,7 @@ pub(crate) type V = wide::f32x8;
 pub const LANES: usize = 8;
 #[cfg(not(target_arch = "aarch64"))]
 pub(crate) type V = wide::f32x8;
-use crate::model::{Mat34, RobotModel, Sphere};
+use crate::model::{Mat34, RobotModel, Scene, Sphere};
 
 /// One link's spheres: a contiguous range of the sphere array and their bounding sphere,
 /// all in the link frame.
@@ -45,6 +45,8 @@ struct Group {
     end: u32,
     /// Bounding sphere: center xyz, radius.
     bound: [f32; 4],
+    /// Boxes (bit `k` = box `k`) every sphere of the group may touch.
+    skip: u32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -81,9 +83,32 @@ pub struct Obstacles {
     pub boxes: Vec<ObstacleBox>,
     pub esdf: Option<Arc<VoxelEsdf>>,
     pub esdf_margin: f32,
+    /// Per robot sphere (order of `RobotModel::spheres`): bit `k` set means the sphere may
+    /// touch box `k`. Empty = no exemptions.
+    pub sphere_box_skip: Vec<u32>,
 }
 
 impl Obstacles {
+    /// The obstacles of a native-core scene: its boxes (with their touch links), its ESDF
+    /// and the per-sphere exemptions.
+    pub fn from_scene(model: &RobotModel, scene: &Scene) -> Self {
+        let mut obs = Obstacles::default();
+        for c in &scene.cuboids {
+            obs.add_box(&c.frame, c.half_extents);
+            let touch = model
+                .links
+                .iter()
+                .enumerate()
+                .filter(|(_, l)| c.touch_links.contains(&l.name))
+                .fold(0u32, |m, (i, _)| m | (1 << i));
+            obs.boxes.last_mut().unwrap().touch = touch;
+        }
+        obs.esdf = scene.esdf.clone();
+        obs.esdf_margin = scene.esdf_margin;
+        obs.sphere_box_skip = scene.sphere_touch.clone();
+        obs
+    }
+
     pub fn add_sphere(&mut self, center: [f64; 3], radius: f64) {
         self.spheres.push(ObstacleSphere {
             center: center.map(|v| v as f32),
@@ -138,6 +163,8 @@ pub struct Checker {
     /// `env_groups[env_by_frame[f]..env_by_frame[f + 1]]` are the groups on frame `f`.
     env_by_frame: Vec<u16>,
     env_spheres: Vec<[f32; 4]>,
+    /// Per environment sphere: boxes it may touch (scene `sphere_touch`).
+    env_skip: Vec<u32>,
     /// Self-collision spheres (may differ from the environment ones), grouped by link.
     self_groups: Vec<Group>,
     self_spheres: Vec<[f32; 4]>,
@@ -156,9 +183,19 @@ pub struct Checker {
 
 /// Spheres grouped by link, re-expressed in each link's FK frame (`frames[link]`, with the
 /// link's pose in that frame `poses[link]`).
-fn groups(spheres: &[Sphere], frames: &[u32], poses: &[Mat34]) -> (Vec<Group>, Vec<[f32; 4]>) {
-    let mut sorted: Vec<&Sphere> = spheres.iter().collect();
-    sorted.sort_by_key(|s| s.link);
+fn groups(
+    spheres: &[Sphere],
+    frames: &[u32],
+    poses: &[Mat34],
+    box_skip: &[u32],
+) -> (Vec<Group>, Vec<[f32; 4]>, Vec<u32>) {
+    let mut order: Vec<usize> = (0..spheres.len()).collect();
+    order.sort_by_key(|&i| spheres[i].link);
+    let skips: Vec<u32> = order
+        .iter()
+        .map(|&i| box_skip.get(i).copied().unwrap_or(0))
+        .collect();
+    let sorted: Vec<&Sphere> = order.iter().map(|&i| &spheres[i]).collect();
     let flat: Vec<[f32; 4]> = sorted
         .iter()
         .map(|s| {
@@ -180,6 +217,7 @@ fn groups(spheres: &[Sphere], frames: &[u32], poses: &[Mat34]) -> (Vec<Group>, V
                 start: i as u32,
                 end: i as u32 + 1,
                 bound: [0.0; 4],
+                skip: 0,
             }),
         }
     }
@@ -201,8 +239,11 @@ fn groups(spheres: &[Sphere], frames: &[u32], poses: &[Mat34]) -> (Vec<Group>, V
             .fold(0.0f32, f32::max);
         // Rounding margin so the bound never undercuts its members in f32.
         g.bound = [c[0], c[1], c[2], r * (1.0 + 1e-6) + 1e-6];
+        g.skip = skips[g.start as usize..g.end as usize]
+            .iter()
+            .fold(!0, |a, &b| a & b);
     }
-    (out, flat)
+    (out, flat, skips)
 }
 
 /// Broadcast `x` to every lane, through the architecture intrinsic: `wide`'s `splat` builds
@@ -419,7 +460,7 @@ fn dist_sq(a: &[V; 3], b: [V; 3]) -> V {
 /// may not touch. Hit masks are OR-ed over all primitives and reduced once (a reduction
 /// per obstacle costs more than the extra arithmetic).
 #[inline(always)]
-fn hits_obstacles(obs: &Obstacles, link_bit: u32, p: &[V; 3], r: f32) -> bool {
+fn hits_obstacles(obs: &Obstacles, link_bit: u32, box_skip: u32, p: &[V; 3], r: f32) -> bool {
     let mut hit = v(0.0).simd_lt(v(0.0)); // all false
     for o in &obs.spheres {
         if o.touch & link_bit == 0 {
@@ -441,8 +482,8 @@ fn hits_obstacles(obs: &Obstacles, link_bit: u32, p: &[V; 3], r: f32) -> bool {
                 .simd_le(v(rr));
         }
     }
-    for o in &obs.boxes {
-        if o.touch & link_bit == 0 {
+    for (k, o) in obs.boxes.iter().enumerate() {
+        if o.touch & link_bit == 0 && (k >= 32 || box_skip & (1 << k) == 0) {
             let w = [
                 p[0] - v(o.center[0]),
                 p[1] - v(o.center[1]),
@@ -520,12 +561,13 @@ impl Checker {
                 links.push(gpu(&in_parent_frame, frames[p] as i32));
             }
         }
-        let (mut env_groups, env_spheres) = groups(&model.spheres, &frames, &poses);
+        let (mut env_groups, env_spheres, env_skip) =
+            groups(&model.spheres, &frames, &poses, &obstacles.sphere_box_skip);
         env_groups.sort_by_key(|g| g.frame);
         let env_by_frame: Vec<u16> = (0..=links.len())
             .map(|f| env_groups.iter().filter(|g| (g.frame as usize) < f).count() as u16)
             .collect();
-        let (self_groups, self_spheres) = groups(&model.self_spheres, &frames, &poses);
+        let (self_groups, self_spheres, _) = groups(&model.self_spheres, &frames, &poses, &[]);
         assert!(env_spheres.len() <= MAX_SPHERES && self_spheres.len() <= MAX_SPHERES);
         let disabled = |a: u32, b: u32| {
             model
@@ -559,12 +601,11 @@ impl Checker {
         let static_self: Vec<[f32; 3]> = self_spheres.iter().map(world).collect();
         let static_bounds: Vec<[f32; 3]> = self_groups.iter().map(|g| world(&g.bound)).collect();
         let static_collision = env_groups.iter().filter(|g| g.frame == 0).any(|g| {
-            env_spheres[g.start as usize..g.end as usize]
-                .iter()
-                .any(|s| {
-                    let p = world(s);
-                    hits_obstacles(&obstacles, 1 << g.link, &[v(p[0]), v(p[1]), v(p[2])], s[3])
-                })
+            (g.start as usize..g.end as usize).any(|i| {
+                let (s, p) = (&env_spheres[i], world(&env_spheres[i]));
+                let p = [v(p[0]), v(p[1]), v(p[2])];
+                hits_obstacles(&obstacles, 1 << g.link, env_skip[i], &p, s[3])
+            })
         });
         Self {
             dof: model.dof(),
@@ -575,6 +616,7 @@ impl Checker {
             env_groups,
             env_by_frame,
             env_spheres,
+            env_skip,
             self_groups,
             self_spheres,
             self_pairs,
@@ -659,12 +701,13 @@ impl Checker {
             for g in &self.env_groups[groups] {
                 let bit = 1u32 << g.link;
                 let b = to_world(m, [g.bound[0], g.bound[1], g.bound[2]]);
-                if !hits_obstacles(&self.obstacles, bit, &b, g.bound[3]) {
+                if !hits_obstacles(&self.obstacles, bit, g.skip, &b, g.bound[3]) {
                     continue;
                 }
-                for s in &self.env_spheres[g.start as usize..g.end as usize] {
+                for i in g.start as usize..g.end as usize {
+                    let s = &self.env_spheres[i];
                     let p = to_world(m, [s[0], s[1], s[2]]);
-                    if hits_obstacles(&self.obstacles, bit, &p, s[3]) {
+                    if hits_obstacles(&self.obstacles, bit, self.env_skip[i], &p, s[3]) {
                         return true;
                     }
                 }

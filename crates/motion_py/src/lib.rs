@@ -10,6 +10,8 @@ use std::f64::consts::PI;
 use motion_core::cartesian::{
     check_configs, plan_cartesian_with, CartesianError, CartesianRequest, Config,
 };
+use motion_core::check::{Checker, Obstacles};
+use motion_core::freespace::{self, FreeSpaceError, FreeSpaceSettings};
 use motion_core::model::Mat34;
 use motion_core::reference::forward_kinematics;
 use motion_core::{load_robot, load_scene, ModelBuffers, RobotModel, Scene};
@@ -19,6 +21,8 @@ use pyo3::prelude::*;
 
 /// (path, cost, stats) returned by `plan_cartesian`.
 type CartesianOutput = (Vec<Vec<f64>>, f64, HashMap<String, f64>);
+/// (path, stats) returned by `plan_motion`.
+type MotionOutput = (Vec<Vec<f64>>, HashMap<String, f64>);
 
 fn mat34(v: &[f64]) -> PyResult<Mat34> {
     v.try_into().map_err(|_| {
@@ -29,9 +33,37 @@ fn mat34(v: &[f64]) -> PyResult<Mat34> {
     })
 }
 
-fn config(v: &[f64]) -> PyResult<[f64; 6]> {
-    v.try_into()
-        .map_err(|_| PyValueError::new_err(format!("expected 6 joint values, got {}", v.len())))
+fn check_dof(model: &RobotModel, v: &[f64]) -> PyResult<()> {
+    if v.len() == model.dof() {
+        Ok(())
+    } else {
+        Err(PyValueError::new_err(format!(
+            "expected {} joint values, got {}",
+            model.dof(),
+            v.len()
+        )))
+    }
+}
+
+/// Upper bound on how far any robot sphere can be from the root: the chain length to its
+/// link plus its offset and radius. Used to pick a motion-check resolution in metres.
+fn reach(model: &RobotModel) -> f64 {
+    let mut chain = vec![0.0f64; model.links.len()];
+    for (i, l) in model.links.iter().enumerate() {
+        if l.parent >= 0 {
+            let t = (l.origin[3].powi(2) + l.origin[7].powi(2) + l.origin[11].powi(2)).sqrt();
+            chain[i] = chain[l.parent as usize] + t;
+        }
+    }
+    model
+        .spheres
+        .iter()
+        .map(|s| {
+            chain[s.link as usize]
+                + (s.center[0].powi(2) + s.center[1].powi(2) + s.center[2].powi(2)).sqrt()
+                + s.radius
+        })
+        .fold(0.0, f64::max)
 }
 
 #[pyclass(module = "compas_fab_native")]
@@ -43,9 +75,44 @@ struct NativeCore {
     auto_touch: Vec<(String, String, usize)>,
     exact: Option<ExactChecker>,
     esdf: Option<(std::sync::Arc<motion_core::esdf::VoxelEsdf>, f32)>,
+    /// Yes/no checker for free-space planning, rebuilt when the scene changes.
+    checker: Option<Checker>,
+}
+
+/// Configurations along a joint-space path, no joint moving more than `step` between two.
+fn densify(path: &[Vec<f64>], step: f64) -> Vec<Vec<f64>> {
+    let mut out = vec![path[0].clone()];
+    for w in path.windows(2) {
+        let jump = w[0]
+            .iter()
+            .zip(&w[1])
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f64::max);
+        let n = (jump / step).ceil().max(1.0) as usize;
+        for k in 1..=n {
+            let t = k as f64 / n as f64;
+            out.push(
+                w[0].iter()
+                    .zip(&w[1])
+                    .map(|(a, b)| a + t * (b - a))
+                    .collect(),
+            );
+        }
+    }
+    out
 }
 
 impl NativeCore {
+    fn checker(&mut self) -> &Checker {
+        if self.checker.is_none() {
+            self.checker = Some(Checker::new(
+                &self.model,
+                Obstacles::from_scene(&self.model, &self.scene),
+            ));
+        }
+        self.checker.as_ref().unwrap()
+    }
+
     fn load_scene(&mut self, scene_json: &str) -> PyResult<()> {
         let mut scene = load_scene(scene_json).map_err(PyValueError::new_err)?;
         if let Some((esdf, margin)) = &self.esdf {
@@ -59,6 +126,7 @@ impl NativeCore {
         };
         self.buffers = ModelBuffers::new(&self.model, &scene);
         self.scene = scene;
+        self.checker = None;
         Ok(())
     }
 }
@@ -84,6 +152,7 @@ impl NativeCore {
             auto_touch: Vec::new(),
             exact: None,
             esdf: None,
+            checker: None,
         };
         core.load_scene(scene_json)?;
         Ok(core)
@@ -200,6 +269,7 @@ impl NativeCore {
         self.scene.esdf = self.esdf.as_ref().map(|(e, _)| e.clone());
         self.scene.esdf_margin = margin;
         self.buffers = ModelBuffers::new(&self.model, &self.scene);
+        self.checker = None;
         Ok((blocks, t.elapsed().as_secs_f64()))
     }
 
@@ -239,8 +309,158 @@ impl NativeCore {
 
     /// Clearance (metres; negative = collision) of each configuration against the scene and itself.
     fn clearance(&self, py: Python<'_>, configs: Vec<Vec<f64>>) -> PyResult<Vec<f32>> {
-        let configs: Vec<[f64; 6]> = configs.iter().map(|c| config(c)).collect::<PyResult<_>>()?;
+        for c in &configs {
+            check_dof(&self.model, c)?;
+        }
         Ok(py.detach(|| check_configs(&self.buffers, &configs)))
+    }
+
+    /// Suggested motion-check resolution (checks per unit of joint-space distance): at least
+    /// VAMP's 32, and enough that no robot sphere moves more than about 2 cm between checks
+    /// of a single-joint motion.
+    #[getter]
+    fn default_resolution(&self) -> f64 {
+        (reach(&self.model) / 0.02).ceil().max(32.0)
+    }
+
+    /// True if the straight joint-space motion from `a` to `b` is collision-free on the
+    /// sphere model, checked at `resolution` points per unit of joint-space distance.
+    #[pyo3(signature = (a, b, resolution = None))]
+    fn motion_free(&mut self, a: Vec<f64>, b: Vec<f64>, resolution: Option<f64>) -> PyResult<bool> {
+        check_dof(&self.model, &a)?;
+        check_dof(&self.model, &b)?;
+        let resolution = resolution.unwrap_or_else(|| self.default_resolution()) as f32;
+        let checker = self.checker();
+        let f = |v: &[f64]| v.iter().map(|&x| x as f32).collect::<Vec<f32>>();
+        Ok(checker.motion_free(&f(&a), &f(&b), resolution))
+    }
+
+    /// Plan a collision-free joint-space path from `start` to any of `goals`: the straight
+    /// motion first, then RRT-Connect and shortcut + B-spline simplification. With `exact`
+    /// (and exact meshes set), the path is checked on the meshes every `exact_step` radians
+    /// and re-planned with another seed (up to `attempts` times) if it touches.
+    ///
+    /// Returns (path, stats). Raises RuntimeError("start_in_collision" | "goals_in_collision"
+    /// | "no_path" | "exact_collision ...").
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        start,
+        goals,
+        range = 1.0,
+        resolution = None,
+        max_iterations = 100_000,
+        seed = 0,
+        simplify = true,
+        exact = true,
+        exact_step = 0.02,
+        attempts = 5,
+    ))]
+    fn plan_motion(
+        &mut self,
+        py: Python<'_>,
+        start: Vec<f64>,
+        goals: Vec<Vec<f64>>,
+        range: f64,
+        resolution: Option<f64>,
+        max_iterations: usize,
+        seed: u64,
+        simplify: bool,
+        exact: bool,
+        exact_step: f64,
+        attempts: usize,
+    ) -> PyResult<MotionOutput> {
+        check_dof(&self.model, &start)?;
+        for g in &goals {
+            check_dof(&self.model, g)?;
+        }
+        if goals.is_empty() {
+            return Err(PyValueError::new_err("no goals"));
+        }
+        let resolution = resolution.unwrap_or_else(|| self.default_resolution());
+        self.checker();
+        let checker = self.checker.as_ref().unwrap();
+        let exact_checker = if exact { self.exact.as_ref() } else { None };
+        let f32s = |v: &[f64]| v.iter().map(|&x| x as f32).collect::<Vec<f32>>();
+        let (start32, goals32): (Vec<f32>, Vec<Vec<f32>>) =
+            (f32s(&start), goals.iter().map(|g| f32s(g)).collect());
+        py.detach(|| {
+            let mut stats = HashMap::new();
+            let mut exact_rejections = 0usize;
+            for attempt in 0..attempts.max(1) {
+                let settings = FreeSpaceSettings {
+                    range: range as f32,
+                    resolution: resolution as f32,
+                    max_iterations,
+                    max_samples: max_iterations,
+                    simplify_rounds: if simplify { 5 } else { 0 },
+                    seed: seed + attempt as u64 * 100_003,
+                    ..Default::default()
+                };
+                let plan = match freespace::plan(checker, &start32, &goals32, &settings) {
+                    Ok(plan) => plan,
+                    Err(FreeSpaceError::StartInCollision) => {
+                        return Err(PyRuntimeError::new_err("start_in_collision"))
+                    }
+                    Err(FreeSpaceError::AllGoalsInCollision) => {
+                        return Err(PyRuntimeError::new_err("goals_in_collision"))
+                    }
+                    Err(FreeSpaceError::NoPath(s)) => {
+                        return Err(PyRuntimeError::new_err(format!(
+                            "no_path after {} iterations",
+                            s.iterations
+                        )))
+                    }
+                };
+                // Back to f64; the endpoints are the caller's own values, not f32 copies.
+                let mut path: Vec<Vec<f64>> = plan
+                    .path
+                    .iter()
+                    .map(|q| q.iter().map(|&x| x as f64).collect())
+                    .collect();
+                path[0] = start.clone();
+                let last = path.len() - 1;
+                let goal = goals
+                    .iter()
+                    .min_by(|a, b| {
+                        let d = |g: &Vec<f64>| {
+                            g.iter()
+                                .zip(&path[last])
+                                .map(|(x, y)| (x - y).abs())
+                                .fold(0.0, f64::max)
+                        };
+                        d(a).total_cmp(&d(b))
+                    })
+                    .unwrap();
+                path[last] = goal.clone();
+                let s = &plan.stats;
+                stats.insert("iterations".to_string(), s.iterations as f64);
+                stats.insert("planning_us".to_string(), s.planning.as_secs_f64() * 1e6);
+                stats.insert(
+                    "simplification_us".to_string(),
+                    s.simplification.as_secs_f64() * 1e6,
+                );
+                stats.insert("initial_cost".to_string(), s.initial_cost as f64);
+                stats.insert("cost".to_string(), s.cost as f64);
+                stats.insert("attempts".to_string(), (attempt + 1) as f64);
+                if let Some(ex) = exact_checker {
+                    let t = std::time::Instant::now();
+                    let dense = densify(&path, exact_step);
+                    let contact = ex.check_many(&dense).into_iter().position(|c| c.is_some());
+                    stats.insert("exact_configs_checked".to_string(), dense.len() as f64);
+                    stats.insert("exact_us".to_string(), t.elapsed().as_secs_f64() * 1e6);
+                    if contact.is_some() {
+                        exact_rejections += 1;
+                        stats.insert("exact_rejections".to_string(), exact_rejections as f64);
+                        continue;
+                    }
+                }
+                stats.insert("exact_rejections".to_string(), exact_rejections as f64);
+                return Ok((path, stats));
+            }
+            Err(PyRuntimeError::new_err(format!(
+                "exact_collision: every one of {attempts} paths touched the exact meshes"
+            )))
+        })
     }
 
     /// Plan a Cartesian path. Returns (path, cost, stats).

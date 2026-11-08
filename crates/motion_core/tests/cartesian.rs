@@ -57,7 +57,7 @@ fn line_over_table_is_planned_continuous_and_collision_free() {
         }
     }
     // Dense re-check of the whole path.
-    let mut dense = Vec::new();
+    let mut dense: Vec<[f64; 6]> = Vec::new();
     for w in res.path.windows(2) {
         for k in 0..20 {
             let f = k as f64 / 20.0;
