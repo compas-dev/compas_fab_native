@@ -1,0 +1,22 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "compas_fab_native"
+description = "Native (Rust) planning core for compas_fab: batched kinematics, collision and Cartesian planning."
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Gramazio Kohler Research", email = "gramaziokohler@arch.ethz.ch" }]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+dynamic = ["version"]
+# Used by compas_fab.backends.native to fit collision spheres to link meshes (Python side for now).
+dependencies = ["numpy", "trimesh>=4", "rtree", "scipy", "networkx"]
+
+[tool.maturin]
+manifest-path = "crates/motion_py/Cargo.toml"
+module-name = "compas_fab_native"
+features = ["pyo3/extension-module"]
