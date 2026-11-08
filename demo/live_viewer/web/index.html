@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Native Planner Live</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+    />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="panel" aria-label="Controls">
+        <header class="brand">
+          <div>
+            <h1>Native Planner Live</h1>
+            <p class="sub">compas_fab NativePlanner → compas_threejs_ts</p>
+          </div>
+          <span id="conn" class="conn" data-state="connecting">connecting</span>
+        </header>
+
+        <nav id="scenarios" class="scenarios" aria-label="Scenarios"></nav>
+
+        <section class="now" aria-live="polite">
+          <h2 id="title">…</h2>
+          <p id="hint" class="hint"></p>
+          <div class="status">
+            <span id="state" class="chip" data-state="idle">idle</span>
+            <span id="status-text" class="status-text"></span>
+          </div>
+          <dl id="metrics" class="metrics"></dl>
+          <div id="controls" class="controls"></div>
+        </section>
+
+        <section class="joints-card">
+          <div class="joints-head">
+            <h3>Joints</h3>
+            <span class="legend"><i class="lg-pos"></i>position in limits <i class="lg-vel"></i>speed / limit</span>
+          </div>
+          <div id="joints" class="joints"></div>
+          <div id="clearance" class="clearance" hidden>
+            <span>Clearance</span>
+            <div class="clr-track"><div id="clr-bar" class="clr-bar"></div></div>
+            <span id="clr-value" class="mono">–</span>
+          </div>
+        </section>
+
+        <footer class="howto">
+          <p><b>Select</b> left-click a yellow, brick or wooden object. <b>Move</b> drag the gizmo (W: move, E: rotate, or the viewer toolbar). <b>Orbit</b> right-drag. <b>Zoom</b> wheel. <b>Deselect</b> Esc.</p>
+        </footer>
+      </aside>
+      <main id="viewer" class="viewer" aria-label="3D viewer"></main>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

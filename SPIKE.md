@@ -42,6 +42,7 @@ native/
   pyproject.toml                maturin build of the extension: `pip install ./native` (abi3 wheel, Python >= 3.9)
   scripts/baseline_cartesian.py compas_fab's Cartesian planners vs NativePlanner on the same path
   results/                      raw numbers from the runs below
+  demo/live_viewer/             live browser demo: Python websocket server + compas_threejs_ts page (README there)
 
 src/compas_fab/backends/native  NativePlanner: the core as a compas_fab backend (model.py builds the
                                 robot/scene descriptions from a RobotCell, planner.py the features)
@@ -421,6 +422,20 @@ Follow-ups done since:
   within their tolerance, stops where blends are rejected. `plan_motion` returns timed
   points by default (URDF velocity limits; acceleration limits from the options) and checks
   the timed, blended motion on the exact meshes, falling back to stops if it touches.
+- **Timing fix (found by the live demo):** the B-spline simplification leaves collinear
+  midpoints, and `acos` of two equal unit directions came out a few 1e-8 rad instead of 0.
+  The blend's bisector `a - b` was then exactly zero, so its arc was NaN, and the TOPP-RA
+  backward pass reported `Infeasible`. The turning angle is now `2 atan2(|a - b|, |a + b|)`.
+  Vertices that turn by less than 1e-6 rad are passed straight through; they used to be
+  full stops. `time_parameterize` also reports `stops` per vertex. Regression test:
+  `collinear_vertices_are_passed_through`.
+- **Live demo** (`demo/live_viewer`): the five scenarios (UR5 around a wall, Panda around a
+  post, servoing a Panda, milling a spiral, plunging through a ring) are planned while you
+  drag targets and obstacles in a compas_threejs_ts viewer, and streamed over a websocket at
+  60 Hz. Planning takes 1 to 45 ms, except the Panda's numeric IK (about 120 ms in Python).
+  ESDF note from the ring: with 2 cm voxels and a 1 cm margin the sphere search can graze a
+  5 cm tube that the exact check then rejects (5 wasted attempts). The demo uses 1.5 cm
+  voxels with a 1.5 cm margin. The default margin should probably scale with the voxel size.
 
 ## Open issues and next steps
 
