@@ -75,6 +75,21 @@ follow the third-party works listed below. Their licenses are in `licenses/`.
    They are read from a local VAMP checkout and not included here.
 
 
+6. Algorithms implemented from publications (no code taken)
+   - crates/motion_core/src/timing.rs, path with circular blends: T. Kunz, M. Stilman,
+     "Time-Optimal Trajectory Generation for Path Following with Bounded Acceleration and
+     Velocity", Robotics: Science and Systems 2012.
+   - crates/motion_core/src/timing.rs, time parameterization: H. Pham, Q.-C. Pham, "A New
+     Approach to Time-Optimal Path Parameterization Based on Reachability Analysis", IEEE
+     Transactions on Robotics 34(3), 2018.
+   - crates/motion_core/src/freespace.rs: J. J. Kuffner, S. M. LaValle, "RRT-Connect: An
+     Efficient Approach to Single-Query Path Planning", ICRA 2000; dynamic domain:
+     A. Yershova, L. Jaillet, T. Siméon, S. M. LaValle, "Dynamic-Domain RRTs", ICRA 2005.
+   - crates/motion_core/src/ik.rs, spherical wrist: product of exponentials and the
+     Paden-Kahan subproblems (R. M. Murray, Z. Li, S. S. Sastry, "A Mathematical
+     Introduction to Robotic Manipulation", CRC Press 1994).
+
+
 Rust crates and Python packages used as dependencies keep their own licenses; see
 `Cargo.lock` (`cargo metadata`) and `pyproject.toml`. Wheels built for distribution must
 bundle their license texts (to do before the first release, e.g. with cargo-about).

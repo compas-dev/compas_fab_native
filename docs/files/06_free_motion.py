@@ -39,7 +39,7 @@ goal.joint_values = [1.2, -1.2, 1.4, -1.8, -1.57, 0.0]
 t0 = time.perf_counter()
 trajectory = planner.plan_motion(ConfigurationTarget(goal), state)
 stats = trajectory.attributes["native_stats"]
-print("around the wall: {} waypoints in {:.1f} ms".format(len(trajectory.points), (time.perf_counter() - t0) * 1e3))
+print("around the wall in {:.1f} ms".format((time.perf_counter() - t0) * 1e3))
 print(
     "  planning {:.0f} us ({:.0f} iterations), smoothing {:.0f} us, exact-mesh check {:.0f} us".format(
         stats["planning_us"], stats["iterations"], stats["simplification_us"], stats["exact_us"]
@@ -52,19 +52,25 @@ print("  joint-space length: {:.2f} before smoothing, {:.2f} after".format(stats
 #    reaches first.
 target = FrameTarget(Frame([0.3, 0.35, 0.3], [1, 0, 0], [0, -1, 0]), TargetMode.ROBOT)
 trajectory = planner.plan_motion(target, state)
-# One waypoint means one of the solutions was reachable in a straight joint-space motion.
-print("to a frame: {} waypoint(s)".format(len(trajectory.points)))
+print("to a frame: {:.2f} s".format(trajectory.attributes["native_stats"]["duration"]))
 
 # 4. To a point and an axis, e.g. a drill that may spin about its own axis: every rotation
 #    about the axis is acceptable, so even more goals.
 target = PointAxisTarget(Point(0.3, -0.35, 0.3), Vector(0, 0, -1), TargetMode.ROBOT)
 trajectory = planner.plan_motion(target, state, options={"axis_samples": 16})
-print("to a point and axis: {} waypoint(s)".format(len(trajectory.points)))
+print("to a point and axis: {:.2f} s".format(trajectory.attributes["native_stats"]["duration"]))
 
-# 5. Robots need a trajectory dense enough to execute: ask for no joint to move more than
-#    0.05 rad between two points.
-trajectory = planner.plan_motion(ConfigurationTarget(goal), state, options={"max_joint_step": 0.05})
-print("densified: {} points".format(len(trajectory.points)))
+# 5. Timing. The trajectory is timed under the joints' velocity limits (from the URDF) and
+#    acceleration limits, starting and ending at rest. Corners are blended (rounded off by
+#    at most 0.05 rad, if the rounded corner is collision-free) so the robot does not stop
+#    at every waypoint. Each point carries its time, velocities and accelerations.
+print("timed: {} points over {:.2f} s".format(len(trajectory.points), stats["duration"]))
+slow = planner.plan_motion(ConfigurationTarget(goal), state, options={"velocity_scaling": 0.25, "max_acceleration": 1.0})
+print("at a quarter of the speed: {:.2f} s".format(slow.attributes["native_stats"]["duration"]))
+middle = trajectory.points[len(trajectory.points) // 2]
+print("halfway: t = {:.2f} s, joint speeds {}".format(middle.time_from_start.seconds, ["{:+.2f}".format(v) for v in middle.velocities]))
+untimed = planner.plan_motion(ConfigurationTarget(goal), state, options={"time_parameterization": False})
+print("untimed, the path's corners only: {} points".format(len(untimed.points)))
 
 # 6. Free motion does not need closed-form IK, so any serial robot works, like this 7-axis
 #    Panda (no kinematics solver given).
@@ -81,4 +87,4 @@ goal = panda_cell.zero_configuration()
 goal.joint_values = [1.2, 0.3, 0.0, -2.0, 0.0, 2.3, 0.8]
 t0 = time.perf_counter()
 trajectory = panda.plan_motion(ConfigurationTarget(goal), panda_state)
-print("panda around a post: {} waypoints in {:.1f} ms".format(len(trajectory.points), (time.perf_counter() - t0) * 1e3))
+print("panda around a post in {:.1f} ms, {:.2f} s long".format((time.perf_counter() - t0) * 1e3, trajectory.attributes["native_stats"]["duration"]))

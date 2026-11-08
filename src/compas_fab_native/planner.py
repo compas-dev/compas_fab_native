@@ -40,6 +40,7 @@ from compas_fab.backends.interfaces.backend_features import SetRobotCell
 from compas_fab.backends.interfaces.backend_features import SetRobotCellState
 from compas_fab.backends.kinematics.exceptions import CartesianMotionError
 from compas_fab.robots import ConfigurationTarget
+from compas_fab.robots import Duration
 from compas_fab.robots import FrameTarget
 from compas_fab.robots import FrameWaypoints
 from compas_fab.robots import JointTrajectory
@@ -395,9 +396,23 @@ class NativePlanner(
             Largest joint change between exact checks (rad). Default 0.02.
         axis_samples : int
             Rotations sampled about a PointAxisTarget's axis. Default 16.
+        time_parameterization : bool
+            Time the path under joint velocity and acceleration limits (TOPP-RA), with
+            blended corners, starting and ending at rest. Points then carry
+            ``time_from_start``, velocities and accelerations. Default True.
+        velocity_scaling, acceleration_scaling : float
+            Fractions of the limits to use. Default 1.0.
+        max_acceleration : float or list
+            Joint acceleration limits (URDFs carry none). Default: twice each joint's
+            velocity limit, i.e. full speed in half a second.
+        blend_tolerance : float
+            Largest joint-space deviation of a blended corner from the planned path.
+            Blends that collide shrink, down to a stop at that corner. Default 0.05.
+        time_step : float
+            Sampling period of the timed trajectory in seconds. Default 0.01.
         max_joint_step : float
-            If given, interpolate the path so no joint moves more than this between points.
-            Default: the path's vertices only.
+            Without time parameterization: interpolate the path so no joint moves more than
+            this between points. Default: the path's vertices only.
         """
         options = options or {}
         client: NativeClient = self.client
@@ -426,20 +441,60 @@ class NativePlanner(
             if message.startswith("goals_in_collision"):
                 raise MPTargetInCollisionError("Every goal configuration of the target is in collision.", target=target)
             raise MPNoPlanFoundError("No path found: {}".format(message))
-        step = options.get("max_joint_step")
-        if step:
-            path = _densify(path, float(step))
         joint_names = client.core.joint_names
         joint_types = client.robot_cell.get_configurable_joint_types(group)
         trajectory = JointTrajectory()
         trajectory.joint_names = joint_names
         # The start configuration is the trajectory's start, not its first point.
-        trajectory.points = [JointTrajectoryPoint(q, joint_types, joint_names=joint_names) for q in path[1:]]
+        if options.get("time_parameterization", True):
+            timed = self._time_parameterize(path, group, options)
+            stats["duration"] = timed["duration"]
+            stats["blends_stopped"] = float(sum(1 for b in timed["blends"] if b == 0.0))
+            trajectory.points = [
+                JointTrajectoryPoint(q, joint_types, velocities=v, accelerations=a, time_from_start=Duration(t, 0), joint_names=joint_names)
+                for t, q, v, a in list(zip(timed["times"], timed["positions"], timed["velocities"], timed["accelerations"]))[1:]
+            ]
+        else:
+            step = options.get("max_joint_step")
+            if step:
+                path = _densify(path, float(step))
+            trajectory.points = [JointTrajectoryPoint(q, joint_types, joint_names=joint_names) for q in path[1:]]
         trajectory.fraction = 1.0
         trajectory.start_configuration = client.robot_cell.zero_full_configuration().merged(self._configuration(path[0]))
         trajectory.start_state = start_state
         trajectory.attributes["native_stats"] = stats
         return trajectory
+
+    def _joint_limits(self, group, options):
+        """Velocity and acceleration limits of the group's joints, scaled by the options."""
+        client: NativeClient = self.client
+        joints = {j.name: j for j in client.robot_cell.robot_model.get_configurable_joints()}
+        velocity = []
+        for name in client.core.joint_names:
+            limit = joints[name].limit if name in joints else None
+            v = limit.velocity if limit is not None and limit.velocity else 1.0
+            velocity.append(float(v))
+        acceleration = options.get("max_acceleration")
+        if acceleration is None:
+            acceleration = [2.0 * v for v in velocity]
+        elif not isinstance(acceleration, (list, tuple)):
+            acceleration = [float(acceleration)] * len(velocity)
+        vs, as_ = float(options.get("velocity_scaling", 1.0)), float(options.get("acceleration_scaling", 1.0))
+        return [v * vs for v in velocity], [a * as_ for a in acceleration]
+
+    def _time_parameterize(self, path, group, options):
+        """Timed samples of a collision-free path. Blends leave the path, so the timed motion
+        is checked on the exact meshes too; if it touches, the corners become stops (the
+        robot then follows the checked path exactly)."""
+        client: NativeClient = self.client
+        velocity, acceleration = self._joint_limits(group, options)
+        kwargs = dict(time_step=float(options.get("time_step", 0.01)), resolution=options.get("resolution"))
+        timed = client.core.time_parameterize(path, velocity, acceleration, blend_tolerance=float(options.get("blend_tolerance", 0.05)), **kwargs)
+        if client.core.has_exact and options.get("exact_check", True) and any(b > 0 for b in timed["blends"]):
+            dense = _densify(timed["positions"], float(options.get("exact_step", 0.02)))
+            if any(c is not None for c in client.core.exact_check(dense)):
+                timed = client.core.time_parameterize(path, velocity, acceleration, blend_tolerance=0.0, **kwargs)
+        return timed
 
     def _motion_goals(self, target, start_state, group, options):
         """Goal configurations (group joint values) of a motion target."""

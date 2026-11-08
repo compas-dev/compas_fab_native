@@ -12,6 +12,7 @@ pub mod model;
 pub mod reference;
 pub mod sampling;
 pub mod simd;
+pub mod timing;
 
 pub use layout::ModelBuffers;
 pub use model::{load_robot, load_scene, RobotModel, Scene};

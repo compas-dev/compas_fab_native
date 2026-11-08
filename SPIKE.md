@@ -405,6 +405,23 @@ What the checker went through on the way (findings for every SIMD kernel here):
 CI (`native.yml`) now also tracks the yes/no check and free-space planning on a
 synthetic shelf scene, since the MotionBenchMaker problems are VAMP's data.
 
+Follow-ups done since:
+
+- **The distance kernel (`cpu.rs`) on explicit SIMD too**, sharing `simd.rs` with the
+  checker: UR5 + boxes 1.47 µs → 0.60 µs per configuration, Cartesian planning -44%.
+- **Joints outside the planning group** (gripper fingers, mimic joints) take their values
+  from the state instead of zero, baked into the joint origins (`set_passive_joints`).
+- **Time parameterization** (`timing.rs`): straight segments with circular blends of
+  bounded deviation (Kunz and Stilman 2012), blends checked for collision and shrunk down to
+  a stop when they collide, then TOPP-RA (Pham and Pham 2018) under joint velocity and
+  acceleration limits, at rest at both ends. Limits are enforced at both ends of every grid
+  step (TOPP-RA's "interpolation" scheme); with only the start enforced, accelerations
+  overshot by 3% on blends. Tests: textbook trapezoid and triangle durations for one joint,
+  limits within 0.1% (velocity) and 2% (acceleration) on a blended 6-joint path, blends
+  within their tolerance, stops where blends are rejected. `plan_motion` returns timed
+  points by default (URDF velocity limits; acceleration limits from the options) and checks
+  the timed, blended motion on the exact meshes, falling back to stops if it touches.
+
 ## Open issues and next steps
 
 - The exact pass covers Cartesian planning; IK uses the sphere model plus
@@ -417,11 +434,9 @@ synthetic shelf scene, since the MotionBenchMaker problems are VAMP's data.
   Fixed with regression tests on the branch `fix/analytical-cartesian-frame-targets`.
 - External axes, 7-DoF redundancy sampling for frame targets and Cartesian paths.
 - Attached workpieces are ignored by the backend; tools are supported.
-- Rewrite the distance kernel in `cpu.rs` (clearance, Cartesian node checks) on explicit
-  SIMD, as the yes/no checker: it was never vectorized.
-- Free-space: time parameterization (velocity, acceleration and jerk limits),
-  joints outside the planning group are held at zero (e.g. the Panda's fingers), the
-  exact-mesh check dominates `plan_motion` (about 1-2 ms), FCIT* or AORRTC for better paths.
+- Free-space: jerk limits (timing is velocity- and acceleration-limited), the exact-mesh
+  check dominates `plan_motion` (about 2-5 ms with timing), FCIT* or AORRTC for better
+  paths, timing for Cartesian trajectories (`core.time_parameterize` is ready for it).
 - `fixtures/vamp_*.json` are derived from VAMP's resources (Apache-2.0, from
   robowflex_resources): the attribution question of the PRD applies to them.
 - Packaging: `native/pyproject.toml` builds an abi3 wheel with maturin (`compas_fab_native`,

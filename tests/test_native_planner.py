@@ -311,3 +311,27 @@ def test_joints_outside_the_group_follow_the_state():
             expected = cell.robot_model.forward_kinematics(config, link)
             got = frames[names.index(link)]
             assert abs(got[3] - expected.point.x) < 1e-9 and abs(got[7] - expected.point.y) < 1e-9 and abs(got[11] - expected.point.z) < 1e-9, (link, opening)
+
+
+def test_plan_motion_is_timed_within_the_joint_limits(ur5_wall):
+    from compas_fab.robots import ConfigurationTarget
+
+    planner, cell, state = ur5_wall
+    start = state.copy()
+    start.robot_configuration = _configuration(cell, [-1.2, -1.2, 1.4, -1.8, -1.57, 0.0])
+    goal = _configuration(cell, [1.2, -1.2, 1.4, -1.8, -1.57, 0.0])
+    options = {"velocity_scaling": 0.5, "max_acceleration": 2.0, "time_step": 0.02}
+    trajectory = planner.plan_motion(ConfigurationTarget(goal), start, options=options)
+    times = [p.time_from_start.seconds for p in trajectory.points]
+    assert all(b > a for a, b in zip(times, times[1:]))
+    assert abs(times[-1] - trajectory.attributes["native_stats"]["duration"]) < 1e-9
+    v_max = 0.5 * math.pi  # UR5 joints: pi rad/s, scaled by 0.5
+    for p in trajectory.points:
+        assert max(abs(v) for v in p.velocities) <= v_max * 1.001
+        assert max(abs(a) for a in p.accelerations) <= 2.0 * 1.02
+    assert trajectory.points[-1].close_to(goal)
+    assert max(abs(v) for v in trajectory.points[-1].velocities) == 0.0
+    _assert_free_path(planner, trajectory)
+    # Without timing: the path's vertices only.
+    vertices = planner.plan_motion(ConfigurationTarget(goal), start, options={"time_parameterization": False})
+    assert len(vertices.points) < len(trajectory.points)

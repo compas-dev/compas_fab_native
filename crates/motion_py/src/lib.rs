@@ -14,6 +14,7 @@ use motion_core::check::{Checker, Obstacles};
 use motion_core::freespace::{self, FreeSpaceError, FreeSpaceSettings};
 use motion_core::model::Mat34;
 use motion_core::reference::forward_kinematics;
+use motion_core::timing::{time_parameterize, TimingSettings};
 use motion_core::{load_robot, load_scene, ModelBuffers, RobotModel, Scene};
 use motion_exact::ExactChecker;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -335,6 +336,55 @@ impl NativeCore {
             exact.set_links(self.model.links.clone());
         }
         true
+    }
+
+    /// Time-parameterize a joint-space path under per-joint velocity and acceleration
+    /// limits: straight segments with circular blends of at most `blend_tolerance` at the
+    /// corners (blends that collide on the sphere model shrink, down to a stop), timed with
+    /// TOPP-RA, starting and ending at rest. Returns a dict with `times`, `positions`,
+    /// `velocities`, `accelerations` (sampled every `time_step`), `duration` and `blends`
+    /// (tolerance used per interior vertex; 0 = stop).
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (path, max_velocity, max_acceleration, blend_tolerance = 0.05, time_step = 0.01, grid_step = 0.005, resolution = None))]
+    fn time_parameterize<'py>(
+        &mut self,
+        py: Python<'py>,
+        path: Vec<Vec<f64>>,
+        max_velocity: Vec<f64>,
+        max_acceleration: Vec<f64>,
+        blend_tolerance: f64,
+        time_step: f64,
+        grid_step: f64,
+        resolution: Option<f64>,
+    ) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+        for q in &path {
+            check_dof(&self.model, q)?;
+        }
+        let resolution = resolution.unwrap_or_else(|| self.default_resolution()) as f32;
+        let settings = TimingSettings {
+            max_velocity,
+            max_acceleration,
+            blend_tolerance,
+            grid_step,
+            time_step,
+        };
+        let checker = self.checker();
+        let f32s = |v: &[f64]| v.iter().map(|&x| x as f32).collect::<Vec<f32>>();
+        let timed = py
+            .detach(|| {
+                time_parameterize(&path, &settings, |a, b| {
+                    checker.motion_free(&f32s(a), &f32s(b), resolution)
+                })
+            })
+            .map_err(|e| PyValueError::new_err(format!("{e:?}")))?;
+        let d = pyo3::types::PyDict::new(py);
+        d.set_item("times", timed.times)?;
+        d.set_item("positions", timed.positions)?;
+        d.set_item("velocities", timed.velocities)?;
+        d.set_item("accelerations", timed.accelerations)?;
+        d.set_item("duration", timed.duration)?;
+        d.set_item("blends", timed.blends)?;
+        Ok(d)
     }
 
     /// Suggested motion-check resolution (checks per unit of joint-space distance): at least

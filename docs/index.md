@@ -17,7 +17,7 @@ backend API, but what it supports is limited (see below) and may change.
 | What you get | What you give up |
 |---|---|
 | Cartesian paths in milliseconds, through the compas_fab API | Frame targets and Cartesian paths need a 6-axis arm: UR (offset wrist) or spherical wrist |
-| Free motion in about a millisecond, for any serial robot | No time parameterization (velocity and acceleration limits) yet |
+| Free motion in milliseconds, for any serial robot, timed under velocity and acceleration limits | No jerk limits yet |
 | Closed-form IK derived from the robot model for spherical-wrist arms | |
 | Sphere-model collision checks for thousands of configurations per millisecond, validated on exact meshes | Attached workpieces are ignored (tools are supported) |
 | Mesh obstacles with holes (distance fields) | Experimental: not on PyPI, built from source |
@@ -49,7 +49,7 @@ Each example builds on the previous one and explains what the planner does as it
 - [`03_cartesian_line.py`](native/files/03_cartesian_line.py){: download="03_cartesian_line.py" }: a 100-waypoint line, what the planner does, and starting from the current configuration
 - [`04_tool_and_free_axis.py`](native/files/04_tool_and_free_axis.py){: download="04_tool_and_free_axis.py" }: a spiral toolpath that only works when the tool may turn about its own axis
 - [`05_mesh_obstacles.py`](native/files/05_mesh_obstacles.py){: download="05_mesh_obstacles.py" }: plunging through a ring, impossible with bounding boxes, possible with a distance field
-- [`06_free_motion.py`](native/files/06_free_motion.py){: download="06_free_motion.py" }: free motion around obstacles, to configurations, frames and point-axis targets, on a UR5 and a 7-axis Panda
+- [`06_free_motion.py`](native/files/06_free_motion.py){: download="06_free_motion.py" }: free motion around obstacles, to configurations, frames and point-axis targets, timed under the joint limits, on a UR5 and a 7-axis Panda
 
 ## How it works, in short
 
@@ -65,6 +65,9 @@ Each example builds on the previous one and explains what the planner does as it
    and from every goal at once, then shortcutting and smoothing, and checks the result on
    the exact meshes. Its collision checks run 8 configurations at a time in SIMD and stop
    at the first contact.
+6. The path is then timed: corners are rounded off within a tolerance (if the rounded
+   corner is collision-free), and the speed along the path is the fastest the joint
+   velocity and acceleration limits allow, starting and ending at rest.
 
 Design notes, measurements and open issues are in
 [`native/SPIKE.md`](https://github.com/compas-dev/compas_fab/blob/spike/native-core/native/SPIKE.md).
