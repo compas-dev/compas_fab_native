@@ -106,7 +106,15 @@ pub struct ModelBuffers {
     pub links: Vec<GpuLink>,
     pub spheres: Vec<GpuSphere>,
     pub cuboids: Vec<GpuCuboid>,
+    /// Spheres for self-collision (inside the link meshes), sorted by link.
+    pub self_spheres: Vec<GpuSphere>,
+    /// Index pairs into `self_spheres` checked for self-collision: spheres on different
+    /// links whose link pair is not disabled in the SRDF.
+    pub self_pairs: Vec<[u32; 2]>,
 }
+
+/// Upper bound on spheres per robot in the CPU lanes kernel (world-sphere scratch).
+pub const MAX_SPHERES: usize = 256;
 
 impl ModelBuffers {
     pub fn new(model: &RobotModel, scene: &Scene) -> Self {
@@ -140,11 +148,43 @@ impl ModelBuffers {
             .collect();
         spheres.sort_by_key(|s| s.link);
         let cuboids = scene.cuboids.iter().map(cuboid_record).collect();
+        let disabled = |a: u32, b: u32| {
+            model
+                .disabled_collisions
+                .iter()
+                .any(|&[x, y]| (x as u32 == a && y as u32 == b) || (x as u32 == b && y as u32 == a))
+        };
+        let mut self_spheres: Vec<GpuSphere> = model
+            .self_spheres
+            .iter()
+            .map(|s| GpuSphere {
+                center: s.center.map(|v| v as f32),
+                radius: s.radius as f32,
+                link: s.link,
+                _pad: [0; 3],
+            })
+            .collect();
+        self_spheres.sort_by_key(|s| s.link);
+        let mut self_pairs = Vec::new();
+        for i in 0..self_spheres.len() {
+            for j in i + 1..self_spheres.len() {
+                let (a, b) = (self_spheres[i].link, self_spheres[j].link);
+                if a != b && !disabled(a, b) {
+                    self_pairs.push([i as u32, j as u32]);
+                }
+            }
+        }
+        assert!(
+            spheres.len() <= MAX_SPHERES,
+            "more than {MAX_SPHERES} spheres"
+        );
         Self {
             dof: model.dof(),
             links,
             spheres,
             cuboids,
+            self_spheres,
+            self_pairs,
         }
     }
 

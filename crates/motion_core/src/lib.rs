@@ -2,6 +2,7 @@
 //! distance query on the CPU, plus the buffer layouts shared with the GPU.
 
 pub mod cpu;
+pub mod ik;
 pub mod layout;
 pub mod model;
 pub mod reference;

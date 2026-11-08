@@ -44,11 +44,75 @@ pub struct RobotModel {
     /// Topologically ordered: every link comes after its parent.
     pub links: Vec<Link>,
     pub spheres: Vec<Sphere>,
+    /// Spheres inside the link meshes, for self-collision (covering spheres of neighbouring
+    /// links overlap permanently). Falls back to `spheres` when the fixture has none.
+    pub self_spheres: Vec<Sphere>,
+    /// Link whose frame planning targets refer to (e.g. `tool0`).
+    pub end_effector_link: usize,
+    /// Link pairs never checked against each other (SRDF disabled collisions).
+    pub disabled_collisions: Vec<[usize; 2]>,
+    pub analytic_ik: Option<crate::ik::AnalyticIk>,
 }
 
 impl RobotModel {
     pub fn dof(&self) -> usize {
         self.joint_names.len()
+    }
+
+    /// Disable self-collision checks between link pairs whose spheres overlap in at least
+    /// `threshold` of `samples` random configurations (MoveIt setup assistant's "always in
+    /// collision" rule, applied to the sphere model). Returns the newly disabled pairs.
+    pub fn disable_always_colliding(
+        &mut self,
+        samples: usize,
+        threshold: f64,
+        seed: u64,
+    ) -> Vec<[usize; 2]> {
+        let n_links = self.links.len();
+        let q = crate::sampling::random_configurations(self, samples, seed);
+        let mut hits = vec![0usize; n_links * n_links];
+        for b in 0..samples {
+            let qb: Vec<f64> = (0..self.dof()).map(|j| q[j * samples + b]).collect();
+            let frames = crate::reference::forward_kinematics(self, &qb);
+            let world: Vec<[f64; 3]> = self
+                .self_spheres
+                .iter()
+                .map(|s| crate::reference::transform_point(&frames[s.link as usize], s.center))
+                .collect();
+            let mut pair = vec![false; n_links * n_links];
+            for i in 0..world.len() {
+                for j in i + 1..world.len() {
+                    let (a, c) = (&self.self_spheres[i], &self.self_spheres[j]);
+                    if a.link == c.link {
+                        continue;
+                    }
+                    let d2 = (0..3)
+                        .map(|k| (world[i][k] - world[j][k]).powi(2))
+                        .sum::<f64>();
+                    if d2 < (a.radius + c.radius).powi(2) {
+                        let (x, y) = (a.link.min(c.link) as usize, a.link.max(c.link) as usize);
+                        pair[x * n_links + y] = true;
+                    }
+                }
+            }
+            for (h, p) in hits.iter_mut().zip(pair) {
+                *h += p as usize;
+            }
+        }
+        let mut added = Vec::new();
+        for x in 0..n_links {
+            for y in x + 1..n_links {
+                let already = self
+                    .disabled_collisions
+                    .iter()
+                    .any(|&[a, b]| (a == x && b == y) || (a == y && b == x));
+                if !already && hits[x * n_links + y] as f64 >= threshold * samples as f64 {
+                    self.disabled_collisions.push([x, y]);
+                    added.push([x, y]);
+                }
+            }
+        }
+        added
     }
 }
 
@@ -112,7 +176,22 @@ struct Fixture {
     joint_limits: Vec<[f64; 2]>,
     links: Vec<FixtureLink>,
     spheres: Vec<FixtureSphere>,
+    #[serde(default)]
+    self_spheres: Option<Vec<FixtureSphere>>,
     reference_fk: FixtureReference,
+    #[serde(default)]
+    end_effector_link: Option<usize>,
+    #[serde(default)]
+    disabled_collisions: Vec<[usize; 2]>,
+    #[serde(default)]
+    analytic_ik: Option<FixtureIk>,
+}
+
+#[derive(Deserialize)]
+struct FixtureIk {
+    family: String,
+    params: Vec<f64>,
+    flange_frame: Vec<f64>,
 }
 
 #[derive(Deserialize)]
@@ -176,15 +255,16 @@ pub fn load_robot(json: &str) -> Result<(RobotModel, ReferenceFk), String> {
         };
         links.push(link);
     }
-    let spheres = f
-        .spheres
-        .into_iter()
-        .map(|s| Sphere {
-            link: s.link,
-            center: s.center,
-            radius: s.radius,
-        })
-        .collect();
+    let to_sphere = |s: FixtureSphere| Sphere {
+        link: s.link,
+        center: s.center,
+        radius: s.radius,
+    };
+    let spheres: Vec<Sphere> = f.spheres.into_iter().map(to_sphere).collect();
+    let self_spheres = match f.self_spheres {
+        Some(v) => v.into_iter().map(to_sphere).collect(),
+        None => spheres.clone(),
+    };
     let reference = ReferenceFk {
         configs: f.reference_fk.configs,
         link_frames: f
@@ -194,12 +274,28 @@ pub fn load_robot(json: &str) -> Result<(RobotModel, ReferenceFk), String> {
             .map(|frames| frames.iter().map(|m| mat34(m)).collect::<Result<_, _>>())
             .collect::<Result<_, _>>()?,
     };
+    let analytic_ik = match f.analytic_ik {
+        None => None,
+        Some(ik) if ik.family == "offset_wrist" => Some(crate::ik::AnalyticIk::offset_wrist(
+            ik.params
+                .as_slice()
+                .try_into()
+                .map_err(|_| "offset_wrist needs 6 params")?,
+            mat34(&ik.flange_frame)?,
+        )),
+        Some(ik) => return Err(format!("unsupported IK family {}", ik.family)),
+    };
+    let end_effector_link = f.end_effector_link.unwrap_or(links.len() - 1);
     let model = RobotModel {
         name: f.name,
         joint_names: f.joint_names,
         joint_limits: f.joint_limits,
         links,
         spheres,
+        self_spheres,
+        end_effector_link,
+        disabled_collisions: f.disabled_collisions,
+        analytic_ik,
     };
     Ok((model, reference))
 }

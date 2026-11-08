@@ -26,9 +26,31 @@ import math
 import numpy as np
 from compas.geometry import Transformation
 
+from compas_fab import backends
 from compas_fab.robots import RobotCellLibrary
 
 JOINT_TYPES = {0: "revolute", 1: "continuous", 2: "prismatic", 3: "fixed"}
+
+# RobotCellLibrary factory -> compas_fab analytical solver class (offset wrist family).
+OFFSET_WRIST_SOLVERS = {
+    "ur3": "UR3Kinematics",
+    "ur3e": "UR3eKinematics",
+    "ur5": "UR5Kinematics",
+    "ur5e": "UR5eKinematics",
+    "ur10": "UR10Kinematics",
+    "ur10e": "UR10eKinematics",
+    "ur16e": "UR16eKinematics",
+}
+
+
+def analytic_ik(robot):
+    """Closed-form IK description, if compas_fab has an analytical solver for this robot."""
+    name = OFFSET_WRIST_SOLVERS.get(robot)
+    if name is None:
+        return None
+    solver = getattr(backends, name)()
+    flange = solver.flange_frame or Frame.worldXY()
+    return {"family": "offset_wrist", "params": list(solver.params), "flange_frame": frame_to_3x4(flange)}
 
 
 def frame_to_3x4(frame):
@@ -60,6 +82,65 @@ def mesh_points_in_link(collision, n_samples, rng):
     return pts @ t_origin[:3, :3].T + t_origin[:3, 3]
 
 
+def link_trimesh(collisions):
+    """All collision meshes of a link as one trimesh, in link coordinates; None if not watertight."""
+    import trimesh
+
+    parts = []
+    for collision in collisions:
+        shape = collision.geometry.shape
+        t = np.array(Transformation.from_frame(collision.origin).matrix) if collision.origin else np.eye(4)
+        scale = np.asarray(getattr(shape, "scale", None) or [1.0, 1.0, 1.0], dtype=float)
+        for mesh in getattr(shape, "meshes", None) or []:
+            vertices, faces = mesh.to_vertices_and_faces(triangulated=True)
+            v = (np.asarray(vertices, dtype=float) * scale) @ t[:3, :3].T + t[:3, 3]
+            part = trimesh.Trimesh(v, np.asarray(faces, dtype=int), process=True)
+            if not part.is_watertight:
+                return None
+            trimesh.repair.fix_normals(part)
+            parts.append(part)
+    return trimesh.util.concatenate(parts) if parts else None
+
+
+def fit_spheres_inscribed(mesh, tolerance, max_spheres, radii, rng):
+    """Greedy cover of the surface with spheres inside the mesh.
+
+    Candidate centres are pushed inward from surface samples by each radius in ``radii``;
+    each candidate gets the largest radius that stays inside (its signed distance to the
+    surface). A surface sample is covered when it lies within ``tolerance`` of a sphere.
+    Spheres are picked greedily by newly covered samples until everything is covered or
+    ``max_spheres`` is reached.
+
+    Returns (spheres, padding): ``padding`` is the largest distance from any surface sample
+    to the sphere set. Spheres never poke out of the mesh (good for self-collision); radii
+    padded by ``padding`` enclose the surface (conservative against obstacles).
+    """
+    import trimesh
+
+    pts, face_idx = trimesh.sample.sample_surface(mesh, 3000, seed=int(rng.integers(1 << 31)))
+    normals = mesh.face_normals[face_idx]
+    sub = rng.choice(len(pts), size=min(600, len(pts)), replace=False)
+    centers = np.concatenate([pts[sub] - r * normals[sub] for r in radii])
+    sd = trimesh.proximity.signed_distance(mesh, centers)  # positive inside
+    keep = sd > 0.002
+    centers, rs = centers[keep], np.minimum(sd[keep], max(radii))
+    if len(centers) == 0:
+        return [], float("inf")
+    dist = np.linalg.norm(pts[None, :, :] - centers[:, None, :], axis=2) - rs[:, None]  # (C, P)
+    covers = dist <= tolerance
+    uncovered = np.ones(len(pts), dtype=bool)
+    chosen = []
+    while uncovered.any() and len(chosen) < max_spheres:
+        gain = (covers & uncovered[None, :]).sum(axis=1)
+        best = int(np.argmax(gain))
+        if gain[best] == 0:
+            break
+        chosen.append(best)
+        uncovered &= ~covers[best]
+    padding = float(np.max(np.min(dist[chosen], axis=0)))
+    return [(centers[i], float(rs[i])) for i in chosen], max(padding, 0.0)
+
+
 def fit_spheres(points, target_radius, max_spheres, rng):
     """k-means clusters, each covered by a sphere around its centroid."""
     if len(points) == 0:
@@ -89,6 +170,9 @@ def main():
     parser.add_argument("--sphere-radius", type=float, default=0.06, help="target sphere radius [m]")
     parser.add_argument("--max-spheres", type=int, default=12, help="max spheres per link")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--self-sphere-radius", type=float, default=0.03, help="self spheres: target radius [m]")
+    parser.add_argument("--max-self-spheres", type=int, default=16, help="self spheres: max per link")
+    parser.add_argument("--tolerance", type=float, default=0.01, help="self spheres: surface tolerance [m]")
     args = parser.parse_args()
 
     rng = np.random.default_rng(args.seed)
@@ -126,11 +210,26 @@ def main():
         exported_links.append(entry)
 
     spheres = []
+    # Two sphere sets per link:
+    # * "spheres": conservative covering spheres (k-means), for checks against obstacles;
+    # * "self_spheres": spheres inside the mesh (inscribed, signed distance), for
+    #   self-collision, where covering spheres of neighbouring links overlap permanently.
+    # Links without a watertight mesh reuse their covering spheres for self-collision.
+    self_spheres = []
     for i, link in enumerate(links):
         pts = [mesh_points_in_link(c, 2000, rng) for c in link.collision]
         pts = np.concatenate(pts) if pts else np.zeros((0, 3))
-        for center, radius in fit_spheres(pts, args.sphere_radius, args.max_spheres, rng):
+        covering = fit_spheres(pts, args.sphere_radius, args.max_spheres, rng)
+        for center, radius in covering:
             spheres.append({"link": i, "center": center.tolist(), "radius": radius})
+        mesh = link_trimesh(link.collision) if link.collision else None
+        if mesh is None:
+            inscribed = covering
+        else:
+            radii = [args.self_sphere_radius * f for f in (0.5, 0.75, 1.0, 1.5, 2.0, 3.0)]
+            inscribed, _ = fit_spheres_inscribed(mesh, args.tolerance, args.max_self_spheres, radii, rng)
+        for center, radius in inscribed:
+            self_spheres.append({"link": i, "center": center.tolist(), "radius": radius})
 
     configs, frames = [], []
     for _ in range(args.samples):
@@ -143,13 +242,20 @@ def main():
         limit = model.get_joint_by_name(name).limit
         limits.append([limit.lower, limit.upper] if limit else [-math.pi, math.pi])
 
+    index = {link.name: i for i, link in enumerate(links)}
+    disabled = sorted([index[a], index[b]] for a, b in cell.robot_semantics.disabled_collisions if a in index and b in index)
+
     fixture = {
         "name": model.name,
+        "end_effector_link": index[cell.get_end_effector_link_name(group)],
+        "disabled_collisions": disabled,
+        "analytic_ik": analytic_ik(args.robot),
         "group": group,
         "joint_names": joint_names,
         "joint_limits": limits,
         "links": exported_links,
         "spheres": spheres,
+        "self_spheres": self_spheres,
         "reference_fk": {"configs": configs, "link_frames": frames},
     }
     with open(args.output, "w") as f:

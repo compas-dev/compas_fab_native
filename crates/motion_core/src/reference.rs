@@ -155,3 +155,34 @@ pub fn distance_query(model: &RobotModel, scene: &Scene, q: &[f64]) -> Query {
     let min = dist.iter().copied().fold(f64::INFINITY, f64::min);
     Query { dist, grad, min }
 }
+
+/// Minimum clearance over all checked sphere pairs (self-collision), f64.
+pub fn self_collision_min(model: &RobotModel, q: &[f64]) -> f64 {
+    let frames = forward_kinematics(model, q);
+    let world: Vec<[f64; 3]> = model
+        .self_spheres
+        .iter()
+        .map(|s| transform_point(&frames[s.link as usize], s.center))
+        .collect();
+    let disabled = |a: u32, b: u32| {
+        model
+            .disabled_collisions
+            .iter()
+            .any(|&[x, y]| (x as u32 == a && y as u32 == b) || (x as u32 == b && y as u32 == a))
+    };
+    let mut min = f64::INFINITY;
+    for i in 0..model.self_spheres.len() {
+        for j in i + 1..model.self_spheres.len() {
+            let (si, sj) = (&model.self_spheres[i], &model.self_spheres[j]);
+            if si.link == sj.link || disabled(si.link, sj.link) {
+                continue;
+            }
+            let d = ((world[i][0] - world[j][0]).powi(2)
+                + (world[i][1] - world[j][1]).powi(2)
+                + (world[i][2] - world[j][2]).powi(2))
+            .sqrt();
+            min = min.min(d - si.radius - sj.radius);
+        }
+    }
+    min
+}

@@ -15,7 +15,7 @@
 
 use rayon::prelude::*;
 
-use crate::layout::{GpuCuboid, GpuLink, GpuSphere, ModelBuffers, MAX_LINKS};
+use crate::layout::{GpuCuboid, GpuLink, GpuSphere, ModelBuffers, MAX_LINKS, MAX_SPHERES};
 use crate::model::JointType;
 
 pub const LANES: usize = 8;
@@ -364,7 +364,18 @@ fn spheres_lanes(
 /// Fused batched query, `LANES` configurations per iteration. Batch must be a multiple of `LANES`.
 pub fn query_lanes(model: &ModelBuffers, q: &[f32], out: &mut BatchOutput) {
     let ptr = OutPtr::new(out);
-    lanes_impl::<true>(model, q, out.batch, ptr);
+    lanes_impl::<true, false>(model, q, out.batch, ptr);
+}
+
+/// Collision check against the scene and the robot itself: per-configuration minimum of
+/// sphere-obstacle and sphere-sphere (self) clearance. Negative = in collision.
+pub fn collision_min_lanes(model: &ModelBuffers, q: &[f32], config_min: &mut [f32]) {
+    let ptr = OutPtr {
+        dist: std::ptr::null_mut(),
+        grad: std::ptr::null_mut(),
+        min: config_min.as_mut_ptr(),
+    };
+    lanes_impl::<false, true>(model, q, config_min.len(), ptr);
 }
 
 /// Collision check only: per-configuration minimum, no per-sphere outputs (`config_min.len()` = batch).
@@ -374,10 +385,15 @@ pub fn query_lanes_min(model: &ModelBuffers, q: &[f32], config_min: &mut [f32]) 
         grad: std::ptr::null_mut(),
         min: config_min.as_mut_ptr(),
     };
-    lanes_impl::<false>(model, q, config_min.len(), ptr);
+    lanes_impl::<false, false>(model, q, config_min.len(), ptr);
 }
 
-fn lanes_impl<const PER_SPHERE: bool>(model: &ModelBuffers, q: &[f32], batch: usize, ptr: OutPtr) {
+fn lanes_impl<const PER_SPHERE: bool, const SELF: bool>(
+    model: &ModelBuffers,
+    q: &[f32],
+    batch: usize,
+    ptr: OutPtr,
+) {
     assert_eq!(q.len(), model.dof * batch);
     assert_eq!(batch % LANES, 0, "batch must be a multiple of {LANES}");
     (0..batch / LANES)
@@ -413,6 +429,30 @@ fn lanes_impl<const PER_SPHERE: bool>(model: &ModelBuffers, q: &[f32], batch: us
                             *ptr.dist.add(s * batch + b0 + l) = d;
                             *ptr.grad.add(s * batch + b0 + l) = [g[0][l], g[1][l], g[2][l], 0.0];
                         }
+                    }
+                }
+            }
+            if SELF {
+                let mut world = [[splat(0.0); 3]; MAX_SPHERES];
+                for (s, sphere) in model.self_spheres.iter().enumerate() {
+                    let m = &frames[sphere.link as usize];
+                    let c = sphere.center;
+                    for l in 0..LANES {
+                        world[s][0][l] = m[0][l] * c[0] + m[1][l] * c[1] + m[2][l] * c[2] + m[3][l];
+                        world[s][1][l] = m[4][l] * c[0] + m[5][l] * c[1] + m[6][l] * c[2] + m[7][l];
+                        world[s][2][l] =
+                            m[8][l] * c[0] + m[9][l] * c[1] + m[10][l] * c[2] + m[11][l];
+                    }
+                }
+                for &[i, j] in &model.self_pairs {
+                    let (a, b) = (&world[i as usize], &world[j as usize]);
+                    let r = model.self_spheres[i as usize].radius
+                        + model.self_spheres[j as usize].radius;
+                    for l in 0..LANES {
+                        let dx = a[0][l] - b[0][l];
+                        let dy = a[1][l] - b[1][l];
+                        let dz = a[2][l] - b[2][l];
+                        min[l] = min[l].min((dx * dx + dy * dy + dz * dz).sqrt() - r);
                     }
                 }
             }

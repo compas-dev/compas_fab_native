@@ -1,5 +1,5 @@
-use motion_core::cpu::{query_lanes, query_scalar, BatchOutput};
-use motion_core::reference::{distance_query, forward_kinematics};
+use motion_core::cpu::{collision_min_lanes, query_lanes, query_scalar, BatchOutput};
+use motion_core::reference::{distance_query, forward_kinematics, self_collision_min};
 use motion_core::sampling::random_configurations;
 use motion_core::{load_robot, load_scene, ModelBuffers};
 
@@ -87,5 +87,35 @@ fn f32_kernels_match_f64_reference() {
     assert!(
         collisions > batch / 10 && collisions < batch * 9 / 10,
         "scene should split configs, got {collisions}/{batch}"
+    );
+}
+
+#[test]
+fn self_collision_lanes_match_reference() {
+    let (model, _, scene) = fixtures();
+    let buffers = ModelBuffers::new(&model, &scene);
+    let batch = 1024;
+    let q64 = random_configurations(&model, batch, 21);
+    let q32: Vec<f32> = q64.iter().map(|&v| v as f32).collect();
+    let mut min = vec![0.0f32; batch];
+    collision_min_lanes(&buffers, &q32, &mut min);
+    let (mut err, mut self_hits) = (0.0f64, 0);
+    for b in 0..batch {
+        let q: Vec<f64> = (0..model.dof())
+            .map(|j| q32[j * batch + b] as f64)
+            .collect();
+        let s = self_collision_min(&model, &q);
+        self_hits += (s < 0.0) as usize;
+        let expected = s.min(distance_query(&model, &scene, &q).min);
+        err = err.max((expected - min[b] as f64).abs());
+    }
+    println!(
+        "{} self pairs, {self_hits}/{batch} configs self-colliding, max err {err:e}",
+        buffers.self_pairs.len()
+    );
+    assert!(err < 1e-5);
+    assert!(
+        self_hits > 0,
+        "random configurations should include some self-collisions"
     );
 }
