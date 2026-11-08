@@ -24,6 +24,7 @@ import json
 import math
 
 import numpy as np
+from compas.geometry import Frame
 from compas.geometry import Transformation
 
 from compas_fab import backends
