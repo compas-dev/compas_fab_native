@@ -59,9 +59,8 @@ fn every_solution_reaches_the_target_and_the_source_config_is_found() {
             assert!(solutions.len() <= MAX_SOLUTIONS);
             total += solutions.len();
             for s in &solutions {
-                for j in 0..6 {
-                    let [lo, hi] = model.joint_limits[j];
-                    assert!(s[j] >= lo - 1e-12 && s[j] <= hi + 1e-12);
+                for (&v, &[lo, hi]) in s.iter().zip(&model.joint_limits) {
+                    assert!(v >= lo - 1e-12 && v <= hi + 1e-12);
                 }
                 worst = worst.max(max_diff(
                     &forward_kinematics(&model, s)[model.end_effector_link],
