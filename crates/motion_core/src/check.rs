@@ -26,11 +26,11 @@ use crate::model::JointType;
 #[cfg(target_arch = "aarch64")]
 pub const LANES: usize = 8;
 #[cfg(target_arch = "aarch64")]
-type V = wide::f32x8;
+pub(crate) type V = wide::f32x8;
 #[cfg(not(target_arch = "aarch64"))]
 pub const LANES: usize = 8;
 #[cfg(not(target_arch = "aarch64"))]
-type V = wide::f32x8;
+pub(crate) type V = wide::f32x8;
 use crate::model::{Mat34, RobotModel, Sphere};
 
 /// One link's spheres: a contiguous range of the sphere array and their bounding sphere,
@@ -133,8 +133,10 @@ pub struct Checker {
     links: Vec<GpuLink>,
     /// Number of links FK has to compute (the last link with spheres, plus its ancestors).
     n_fk: usize,
-    /// Environment spheres, grouped by link.
+    /// Environment spheres, grouped by link, ordered by FK frame.
     env_groups: Vec<Group>,
+    /// `env_groups[env_by_frame[f]..env_by_frame[f + 1]]` are the groups on frame `f`.
+    env_by_frame: Vec<u16>,
     env_spheres: Vec<[f32; 4]>,
     /// Self-collision spheres (may differ from the environment ones), grouped by link.
     self_groups: Vec<Group>,
@@ -206,7 +208,7 @@ fn groups(spheres: &[Sphere], frames: &[u32], poses: &[Mat34]) -> (Vec<Group>, V
 /// Broadcast `x` to every lane, through the architecture intrinsic: `wide`'s `splat` builds
 /// an array in memory, which LLVM lowers to a `memset_pattern16` call on macOS.
 #[inline(always)]
-fn v(x: f32) -> V {
+pub(crate) fn v(x: f32) -> V {
     #[cfg(target_arch = "aarch64")]
     {
         // SAFETY: NEON is always present on aarch64; f32x4 has the layout of float32x4_t.
@@ -414,15 +416,15 @@ fn dist_sq(a: &[V; 3], b: [V; 3]) -> V {
 }
 
 /// True if any lane of a sphere (world position, radius) touches an obstacle that `link`
-/// may not touch.
+/// may not touch. Hit masks are OR-ed over all primitives and reduced once (a reduction
+/// per obstacle costs more than the extra arithmetic).
 #[inline(always)]
 fn hits_obstacles(obs: &Obstacles, link_bit: u32, p: &[V; 3], r: f32) -> bool {
+    let mut hit = v(0.0).simd_lt(v(0.0)); // all false
     for o in &obs.spheres {
         if o.touch & link_bit == 0 {
             let rr = (r + o.radius) * (r + o.radius);
-            if dist_sq(p, o.center.map(v)).simd_le(v(rr)).any() {
-                return true;
-            }
+            hit |= dist_sq(p, o.center.map(v)).simd_le(v(rr));
         }
     }
     for o in &obs.capsules {
@@ -434,13 +436,9 @@ fn hits_obstacles(obs: &Obstacles, link_bit: u32, p: &[V; 3], r: f32) -> bool {
             .max(v(0.0))
             .min(v(1.0));
             let e = [0, 1, 2].map(|k| t.mul_add(v(-o.d[k]), w[k]));
-            if e[0]
+            hit |= e[0]
                 .mul_add(e[0], e[1].mul_add(e[1], e[2] * e[2]))
-                .simd_le(v(rr))
-                .any()
-            {
-                return true;
-            }
+                .simd_le(v(rr));
         }
     }
     for o in &obs.boxes {
@@ -457,10 +455,11 @@ fn hits_obstacles(obs: &Obstacles, link_bit: u32, p: &[V; 3], r: f32) -> bool {
                 let e = (proj.abs() - v(o.half_extents[k])).max(v(0.0));
                 sum = e.mul_add(e, sum);
             }
-            if sum.simd_le(v(r * r)).any() {
-                return true;
-            }
+            hit |= sum.simd_le(v(r * r));
         }
+    }
+    if hit.any() {
+        return true;
     }
     if let Some(esdf) = &obs.esdf {
         let (x, y, z) = (p[0].to_array(), p[1].to_array(), p[2].to_array());
@@ -521,7 +520,11 @@ impl Checker {
                 links.push(gpu(&in_parent_frame, frames[p] as i32));
             }
         }
-        let (env_groups, env_spheres) = groups(&model.spheres, &frames, &poses);
+        let (mut env_groups, env_spheres) = groups(&model.spheres, &frames, &poses);
+        env_groups.sort_by_key(|g| g.frame);
+        let env_by_frame: Vec<u16> = (0..=links.len())
+            .map(|f| env_groups.iter().filter(|g| (g.frame as usize) < f).count() as u16)
+            .collect();
         let (self_groups, self_spheres) = groups(&model.self_spheres, &frames, &poses);
         assert!(env_spheres.len() <= MAX_SPHERES && self_spheres.len() <= MAX_SPHERES);
         let disabled = |a: u32, b: u32| {
@@ -570,6 +573,7 @@ impl Checker {
             links,
             n_fk,
             env_groups,
+            env_by_frame,
             env_spheres,
             self_groups,
             self_spheres,
@@ -628,20 +632,31 @@ impl Checker {
         if self.static_collision {
             return true;
         }
+        // Frame by frame: compute the frame, then check its links against the environment,
+        // so a configuration that collides early skips the rest of the chain (as VAMP does).
+        // Frame 0 (the root) is constant: its links were checked when the checker was built.
         let mut frames = [const { MaybeUninit::<M>::uninit() }; MAX_LINKS];
-        self.fk(q, &mut frames);
-        // Groups on frame 0 are static and handled apart; every other group's frame is in
-        // 1..n_fk, initialized by `fk`.
-        let frame = |f: u32| unsafe { frames[f as usize].assume_init_ref() };
-        let splat3 = |p: [f32; 3]| [v(p[0]), v(p[1]), v(p[2])];
-
-        // Environment: bounding sphere per moving link, then that link's spheres.
-        if !self.obstacles.is_empty() {
-            for g in &self.env_groups {
-                if g.frame == 0 {
-                    continue;
-                }
-                let m = frame(g.frame);
+        let check_env = !self.obstacles.is_empty();
+        for i in 1..self.n_fk {
+            let link = &self.links[i];
+            let value = if link.q_index >= 0 {
+                q[link.q_index as usize]
+            } else {
+                v(0.0)
+            };
+            let m = if link.parent == 0 {
+                compose(|k| v(self.root[k]), link, value)
+            } else {
+                // Parents come before children, so the parent frame is initialized.
+                let p = unsafe { frames[link.parent as usize].assume_init_ref() };
+                compose(|k| p[k], link, value)
+            };
+            let m = frames[i].write(m);
+            if !check_env {
+                continue;
+            }
+            let groups = self.env_by_frame[i] as usize..self.env_by_frame[i + 1] as usize;
+            for g in &self.env_groups[groups] {
                 let bit = 1u32 << g.link;
                 let b = to_world(m, [g.bound[0], g.bound[1], g.bound[2]]);
                 if !hits_obstacles(&self.obstacles, bit, &b, g.bound[3]) {
@@ -655,6 +670,9 @@ impl Checker {
                 }
             }
         }
+        // Every moving group's frame is in 1..n_fk, initialized above.
+        let frame = |f: u32| unsafe { frames[f as usize].assume_init_ref() };
+        let splat3 = |p: [f32; 3]| [v(p[0]), v(p[1]), v(p[2])];
 
         // Self-collision: bounding spheres of the pair, then each sphere against the other
         // link's bound, then sphere pairs.

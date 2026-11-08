@@ -11,7 +11,7 @@
 
 use std::time::{Duration, Instant};
 
-use crate::check::Checker;
+use crate::check::{v, Checker, LANES, V};
 
 #[derive(Clone, Debug)]
 pub struct FreeSpaceSettings {
@@ -103,6 +103,9 @@ struct Halton {
     span: Vec<f32>,
 }
 
+/// Most joints a planned robot may have.
+pub const MAX_DOF: usize = 16;
+
 const PRIMES: [u64; 16] = [3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59];
 
 impl Halton {
@@ -134,17 +137,20 @@ impl Halton {
     }
 }
 
-/// Nodes of both trees in one buffer; each tree keeps its own node list for nearest queries.
+/// One tree's nodes for nearest-neighbour queries: blocks of `LANES` nodes stored per
+/// dimension (`block * dof * LANES + j * LANES + lane`), scanned `LANES` nodes at a time.
+/// Unused lanes of the last block hold infinity.
 struct Tree {
-    /// Coordinates of this tree's nodes, `dof` floats each, for a cache-friendly scan.
-    coords: Vec<f32>,
+    dof: usize,
+    blocks: Vec<f32>,
     ids: Vec<u32>,
 }
 
 impl Tree {
-    fn new() -> Self {
+    fn new(dof: usize) -> Self {
         Self {
-            coords: Vec::new(),
+            dof,
+            blocks: Vec::new(),
             ids: Vec::new(),
         }
     }
@@ -154,25 +160,47 @@ impl Tree {
     }
 
     fn insert(&mut self, id: u32, q: &[f32]) {
+        let (block, lane) = (self.ids.len() / LANES, self.ids.len() % LANES);
+        if lane == 0 {
+            self.blocks
+                .resize((block + 1) * self.dof * LANES, f32::INFINITY);
+        }
+        for (j, &x) in q.iter().enumerate() {
+            self.blocks[(block * self.dof + j) * LANES + lane] = x;
+        }
         self.ids.push(id);
-        self.coords.extend_from_slice(q);
     }
 
     /// Nearest node (id, distance).
     fn nearest(&self, q: &[f32]) -> (u32, f32) {
-        let dof = q.len();
-        let mut best = (0usize, f32::INFINITY);
-        for (k, c) in self.coords.chunks_exact(dof).enumerate() {
-            let mut d = 0.0;
+        let dof = self.dof;
+        let mut qv = [v(0.0); MAX_DOF];
+        for (j, &x) in q.iter().enumerate() {
+            qv[j] = v(x);
+        }
+        let mut best_d = v(f32::INFINITY);
+        let mut best_b = v(0.0);
+        for (b, block) in self.blocks.chunks_exact(dof * LANES).enumerate() {
+            let mut d = v(0.0);
             for j in 0..dof {
-                let e = c[j] - q[j];
-                d += e * e;
+                let x: [f32; LANES] = block[j * LANES..(j + 1) * LANES].try_into().unwrap();
+                let e = V::new(x) - qv[j];
+                d = e.mul_add(e, d);
             }
-            if d < best.1 {
-                best = (k, d);
+            let closer = d.simd_lt(best_d);
+            best_d = closer.select(d, best_d);
+            best_b = closer.select(v(b as f32), best_b);
+        }
+        let (d, b) = (best_d.to_array(), best_b.to_array());
+        let mut lane = 0;
+        for l in 1..LANES {
+            // Ties go to the earlier node, as in a plain linear scan.
+            let (k, kl) = (b[l] as usize * LANES + l, b[lane] as usize * LANES + lane);
+            if d[l] < d[lane] || (d[l] == d[lane] && k < kl) {
+                lane = l;
             }
         }
-        (self.ids[best.0], best.1.sqrt())
+        (self.ids[b[lane] as usize * LANES + lane], d[lane].sqrt())
     }
 }
 
@@ -248,8 +276,8 @@ fn rrt_connect(
         parents: Vec::with_capacity(1024),
         radii: Vec::with_capacity(1024),
     };
-    let mut start_tree = Tree::new();
-    let mut goal_tree = Tree::new();
+    let mut start_tree = Tree::new(dof);
+    let mut goal_tree = Tree::new(dof);
     let id = nodes.add(start, None);
     start_tree.insert(id, start);
     for goal in goals {
@@ -283,13 +311,15 @@ fn rrt_connect(
         if s.dynamic_domain && near_radius < near_dist {
             continue;
         }
-        let near_q: Vec<f32> = nodes.get(near).to_vec();
+        let mut near_q = [0.0f32; MAX_DOF];
+        near_q[..dof].copy_from_slice(nodes.get(near));
+        let near_q = &near_q[..dof];
         let reach = near_dist < s.range;
         let scale = if reach { 1.0 } else { s.range / near_dist };
         for j in 0..dof {
             new[j] = near_q[j] + (sample[j] - near_q[j]) * scale;
         }
-        if !checker.motion_free(&near_q, &new, s.resolution) {
+        if !checker.motion_free(near_q, &new, s.resolution) {
             if s.dynamic_domain {
                 let r = &mut nodes.radii[near as usize];
                 *r = if r.is_infinite() {
@@ -308,7 +338,8 @@ fn rrt_connect(
 
         // Connect: extend from the new node towards the other tree's nearest node.
         let (other, other_dist) = b.nearest(&new);
-        let other_q: Vec<f32> = nodes.get(other).to_vec();
+        let mut other_q = [0.0f32; MAX_DOF];
+        other_q[..dof].copy_from_slice(nodes.get(other));
         let n_ext = (other_dist / s.range).ceil().max(1.0) as usize;
         for j in 0..dof {
             step[j] = (other_q[j] - new[j]) / n_ext as f32;
@@ -321,14 +352,18 @@ fn rrt_connect(
                 connected = false;
                 break;
             }
-            let next: Vec<f32> = (0..dof).map(|j| prior[j] + step[j]).collect();
-            if !checker.motion_free(&prior, &next, s.resolution) {
+            let mut next = [0.0f32; MAX_DOF];
+            for j in 0..dof {
+                next[j] = prior[j] + step[j];
+            }
+            let next = &next[..dof];
+            if !checker.motion_free(&prior, next, s.resolution) {
                 connected = false;
                 break;
             }
-            last = nodes.add(&next, Some(last));
-            a.insert(last, &next);
-            prior = next;
+            last = nodes.add(next, Some(last));
+            a.insert(last, next);
+            prior.copy_from_slice(next);
         }
         if !connected {
             continue;
