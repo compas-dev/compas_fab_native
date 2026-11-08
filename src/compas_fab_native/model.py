@@ -291,6 +291,22 @@ def cached_sphere_sets(tris, seed=0, **options):
 # Robot and scene descriptions
 
 
+def joint_limits(joint):
+    """Position limits of a configurable joint, as the core needs them (finite).
+
+    Continuous joints have none (a ``<limit>`` tag on one only carries effort and velocity;
+    compas_robots reads its absent bounds as 0 and 0): they get one full turn either way,
+    so every angle is reachable without wrapping. Revolute and prismatic joints without a
+    limit get one half turn either way (a URDF requires the limit for them).
+    """
+    if joint.type == 1:  # continuous
+        return [-2 * math.pi, 2 * math.pi]
+    limit = joint.limit
+    if limit is None:
+        return [-math.pi, math.pi]
+    return [limit.lower, limit.upper]
+
+
 def topological_links(robot_model):
     """(link, parent index, joint) with every link after its parent."""
     out = []
@@ -377,8 +393,9 @@ def robot_description(robot_cell, group=None, kinematics_solver=None, seed=0, sp
         tris = meshes_to_triangles(collision_items(link.collision))
         if len(tris):
             geometry[i] = tris
-    # Share the core's sphere budget between the links, keeping one link's worth for tools.
-    per_link = max(1, (MAX_SPHERES - DEFAULT_MAX_SPHERES) // max(1, len(geometry)))
+    # Share the core's sphere budget between the links, keeping two links' worth for what
+    # the robot carries (a tool and a workpiece, see add_carried_objects).
+    per_link = max(1, (MAX_SPHERES - 2 * DEFAULT_MAX_SPHERES) // max(1, len(geometry)))
     link_options = dict(sphere_options)
     for key in ("max_spheres", "max_self_spheres"):
         link_options[key] = min(link_options.get(key, DEFAULT_MAX_SPHERES), per_link)
@@ -391,8 +408,8 @@ def robot_description(robot_cell, group=None, kinematics_solver=None, seed=0, sp
 
     limits = []
     for name in joint_names:
-        limit = model.get_joint_by_name(name).limit
-        limits.append([limit.lower, limit.upper] if limit else [-math.pi, math.pi])
+        joint = model.get_joint_by_name(name)
+        limits.append(joint_limits(joint))
 
     index = {link.name: i for i, (link, _, _) in enumerate(ordered)}
     disabled = sorted([index[a], index[b]] for a, b in robot_cell.robot_semantics.disabled_collisions if a in index and b in index)
@@ -424,40 +441,143 @@ def tool_triangles(tool_model, tool_configuration=None):
     return meshes_to_triangles(items)
 
 
-def add_attached_tools(description, robot_cell, robot_cell_state, group, seed=0, sphere_options=None):
-    """Append spheres of tools attached to ``group`` to its end-effector link (in place).
+def _matrix(frame_or_transformation):
+    if frame_or_transformation is None:
+        return np.eye(4)
+    t = frame_or_transformation
+    t = t if isinstance(t, Transformation) else Transformation.from_frame(t)
+    return np.array(t.matrix)
 
-    Collisions between the tool and its touch links (and the end-effector link's nearest
-    ancestor with geometry) are disabled, as the tool is mounted against them.
+
+def rigid_body_triangles(robot_cell, body_id):
+    """Collision triangles of a rigid body (visual meshes if it has none), in its own frame."""
+    body = robot_cell.rigid_body_models[body_id]
+    meshes = body.collision_meshes_in_meters or body.visual_meshes_in_meters
+    if not meshes:
+        return np.zeros((0, 3, 3))
+    return meshes_to_triangles([(m, np.eye(4), [1.0, 1.0, 1.0]) for m in meshes])
+
+
+def moving_link_names(robot_cell, group):
+    """Names of the links ``group`` moves (the planning tree without its static ancestors)."""
+    tree, static = planning_links(robot_cell, group)
+    return {link.name for link, _, _ in tree} - {link.name for link in static}
+
+
+def carried_objects(robot_cell, robot_cell_state, group):
+    """The objects that move with the planning group.
+
+    * tools attached to ``group``, on its end-effector link;
+    * rigid bodies attached to such a tool (a workpiece in the gripper), on the same link;
+    * rigid bodies attached to a link ``group`` moves.
+
+    Returns
+    -------
+    list
+        ``(name, link name, 4x4 link -> object, triangles in object coordinates, touch
+        links, is_tool)``, hidden objects left out.
     """
-    ee = description["end_effector_link"]
-    names = [link["name"] for link in description["links"]]
-    for tool_id, tool_state in robot_cell_state.tool_states.items():
+    group = group or robot_cell.main_group_name
+    ee = robot_cell.get_end_effector_link_name(group)
+    moving = moving_link_names(robot_cell, group)
+    out = []
+    for tool_id, tool_state in sorted(robot_cell_state.tool_states.items()):
         if tool_state.attached_to_group != group or tool_state.is_hidden:
             continue
-        tool_model = robot_cell.tool_models[tool_id]
-        tris = tool_triangles(tool_model, tool_state.configuration)
-        if len(tris) == 0:
+        tris = tool_triangles(robot_cell.tool_models[tool_id], tool_state.configuration)
+        if len(tris):
+            out.append(("tool:" + tool_id, ee, _matrix(tool_state.attachment_frame), tris, list(tool_state.touch_links or []), True))
+    for body_id, body_state in sorted(robot_cell_state.rigid_body_states.items()):
+        if body_state.is_hidden:
             continue
-        t_attach = np.array(Transformation.from_frame(tool_state.attachment_frame or Frame.worldXY()).matrix)
-        tris = tris @ t_attach[:3, :3].T + t_attach[:3, 3]
-        covering, inscribed = cached_sphere_sets(tris, seed, **(sphere_options or {}))
-        description["spheres"] += [{"link": ee, "center": c.tolist(), "radius": r} for c, r in covering]
-        description["self_spheres"] += [{"link": ee, "center": c.tolist(), "radius": r} for c, r in inscribed]
-        touch = set(tool_state.touch_links or [])
-        # The closest ancestor of the end-effector link that has geometry (e.g. the wrist).
-        parent = description["links"][ee]["parent"]
-        with_geometry = {s["link"] for s in description["spheres"]} - {ee}
-        while parent >= 0 and parent not in with_geometry:
-            parent = description["links"][parent]["parent"]
-        if parent >= 0:
-            touch.add(names[parent])
-        for name in touch:
-            if name in names:
-                pair = sorted([ee, names.index(name)])
+        if body_state.attached_to_tool:
+            tool_state = robot_cell_state.tool_states.get(body_state.attached_to_tool)
+            if tool_state is None or tool_state.attached_to_group != group:
+                continue
+            link, t = ee, _matrix(robot_cell.t_pcf_ocf(robot_cell_state, body_id))
+        elif body_state.attached_to_link and body_state.attached_to_link in moving:
+            link, t = body_state.attached_to_link, _matrix(body_state.attachment_frame)
+        else:
+            continue
+        tris = rigid_body_triangles(robot_cell, body_id)
+        if len(tris):
+            out.append(("body:" + body_id, link, t, tris, list(body_state.touch_links or []), False))
+    return out
+
+
+def static_objects(robot_cell, robot_cell_state, group):
+    """Tools and attached rigid bodies that do not move with ``group``, as obstacles posed
+    at the state: tools of other groups and what they hold, bodies attached to links
+    ``group`` cannot move, and tools standing free (e.g. in a tool changer).
+
+    Returns ``(name, triangles in robot coordinates, touch links, rotation of the object)``
+    items, like ``static_link_obstacles``. Free rigid bodies are not included; the
+    obstacle builders handle them.
+    """
+    group = group or robot_cell.main_group_name
+    carried = {name for name, *_ in carried_objects(robot_cell, robot_cell_state, group)}
+    mounted = [tid for tid, ts in robot_cell_state.tool_states.items() if ts.attached_to_group and "tool:" + tid not in carried]
+    mounted += [bid for bid, bs in robot_cell_state.rigid_body_states.items() if (bs.attached_to_link or bs.attached_to_tool) and "body:" + bid not in carried]
+    posed = robot_cell.compute_attach_objects_frames(robot_cell_state) if mounted else robot_cell_state
+    t_rcf = np.linalg.inv(_matrix(robot_cell_state.robot_base_frame or Frame.worldXY()))
+    out = []
+    for tool_id, tool_state in sorted(posed.tool_states.items()):
+        if tool_state.is_hidden or "tool:" + tool_id in carried or tool_state.frame is None:
+            continue
+        t = t_rcf @ _matrix(tool_state.frame)
+        tris = tool_triangles(robot_cell.tool_models[tool_id], tool_state.configuration)
+        if len(tris):
+            out.append(("tool:" + tool_id, tris @ t[:3, :3].T + t[:3, 3], list(tool_state.touch_links or []), t[:3, :3]))
+    for body_id, body_state in sorted(posed.rigid_body_states.items()):
+        attached = body_state.attached_to_link or body_state.attached_to_tool
+        if not attached or body_state.is_hidden or "body:" + body_id in carried or body_state.frame is None:
+            continue
+        t = t_rcf @ _matrix(body_state.frame)
+        tris = rigid_body_triangles(robot_cell, body_id)
+        if len(tris):
+            out.append(("body:" + body_id, tris @ t[:3, :3].T + t[:3, 3], list(body_state.touch_links or []), t[:3, :3]))
+    return out
+
+
+def add_carried_objects(description, robot_cell, robot_cell_state, group, seed=0, sphere_options=None):
+    """Append spheres of the objects that move with ``group`` (see ``carried_objects``) to
+    the links that carry them (in place).
+
+    Collisions between an object and its touch links are disabled, and for a tool also
+    with the end-effector link's nearest ancestor with geometry (the wrist it is mounted
+    against). The objects share what is left of the core's sphere budget.
+    """
+    objects = carried_objects(robot_cell, robot_cell_state, group)
+    if not objects:
+        return description
+    names = [link["name"] for link in description["links"]]
+    options = dict(sphere_options or {})
+    for key, used in (("max_spheres", len(description["spheres"])), ("max_self_spheres", len(description["self_spheres"]))):
+        options[key] = max(1, min(options.get(key, DEFAULT_MAX_SPHERES), (MAX_SPHERES - used) // len(objects)))
+    for name, link_name, t, tris, touch, is_tool in objects:
+        link = names.index(link_name)
+        tris = tris @ t[:3, :3].T + t[:3, 3]
+        covering, inscribed = cached_sphere_sets(tris, seed, **options)
+        description["spheres"] += [{"link": link, "center": c.tolist(), "radius": r} for c, r in covering]
+        description["self_spheres"] += [{"link": link, "center": c.tolist(), "radius": r} for c, r in inscribed]
+        touch = set(touch)
+        if is_tool:
+            # The closest ancestor of the end-effector link that has geometry (e.g. the wrist).
+            parent = description["links"][link]["parent"]
+            with_geometry = {s["link"] for s in description["spheres"]} - {link}
+            while parent >= 0 and parent not in with_geometry:
+                parent = description["links"][parent]["parent"]
+            if parent >= 0:
+                touch.add(names[parent])
+        for other in touch:
+            if other in names and names.index(other) != link:
+                pair = sorted([link, names.index(other)])
                 if pair not in description["disabled_collisions"]:
                     description["disabled_collisions"].append(pair)
     return description
+
+
+add_attached_tools = add_carried_objects  # earlier name
 
 
 def static_link_obstacles(robot_cell, robot_cell_state, group=None) -> list:
@@ -497,6 +617,13 @@ def static_link_obstacles(robot_cell, robot_cell_state, group=None) -> list:
             name = "link:" + link.name + ("/{}".format(k) if len(parts) > 1 else "")
             obstacles.append((name, part, sorted(touch)))
     return obstacles
+
+
+def static_obstacles(robot_cell, robot_cell_state, group=None) -> list:
+    """Everything that stands still while ``group`` plans, besides free rigid bodies: the
+    links it cannot move (``static_link_obstacles``) and the tools and attached bodies it
+    does not carry (``static_objects``)."""
+    return static_link_obstacles(robot_cell, robot_cell_state, group) + static_objects(robot_cell, robot_cell_state, group)
 
 
 def connected_parts(tris):
@@ -548,11 +675,12 @@ def obstacle_boxes(robot_cell, robot_cell_state, only_touching=False, group=None
         box["touch_links"] = list(body_state.touch_links or [])
         cuboids.append(box)
     if static is None:
-        static = static_link_obstacles(robot_cell, robot_cell_state, group)
-    for name, tris, touch in static:
+        static = static_obstacles(robot_cell, robot_cell_state, group)
+    for item in static:
+        name, tris, touch = item[:3]
         if only_touching and not touch:
             continue
-        box = oriented_box(name, tris.reshape(-1, 3))
+        box = oriented_box(name, tris.reshape(-1, 3), axes=item[3] if len(item) > 3 else None)
         box["touch_links"] = touch
         cuboids.append(box)
     return {"cuboids": cuboids}
@@ -602,7 +730,8 @@ def mesh_payload(tris):
 
 
 def exact_robot_meshes(robot_cell, robot_cell_state=None, group=None) -> dict:
-    """Collision meshes per link (link coordinates), attached tools merged into the end-effector link."""
+    """Collision meshes per link (link coordinates), with the objects the group carries
+    (``carried_objects``) merged into their links."""
     group = group or robot_cell.main_group_name
     ordered, static = planning_links(robot_cell, group)
     static = {link.name for link in static}
@@ -615,15 +744,10 @@ def exact_robot_meshes(robot_cell, robot_cell_state=None, group=None) -> dict:
         if len(tris):
             per_link[i] = tris
     if robot_cell_state is not None:
-        ee = names.index(robot_cell.get_end_effector_link_name(group))
-        for tool_id, tool_state in robot_cell_state.tool_states.items():
-            if tool_state.attached_to_group != group or tool_state.is_hidden:
-                continue
-            tris = tool_triangles(robot_cell.tool_models[tool_id], tool_state.configuration)
-            if len(tris):
-                t = np.array(Transformation.from_frame(tool_state.attachment_frame or Frame.worldXY()).matrix)
-                tris = tris @ t[:3, :3].T + t[:3, 3]
-                per_link[ee] = np.concatenate([per_link[ee], tris]) if ee in per_link else tris
+        for _, link_name, t, tris, _, _ in carried_objects(robot_cell, robot_cell_state, group):
+            i = names.index(link_name)
+            tris = tris @ t[:3, :3].T + t[:3, 3]
+            per_link[i] = np.concatenate([per_link[i], tris]) if i in per_link else tris
     return {"links": [dict(link=i, **mesh_payload(tris)) for i, tris in sorted(per_link.items())]}
 
 
@@ -646,8 +770,9 @@ def exact_obstacle_meshes(robot_cell, robot_cell_state, without_touching=False, 
         tris = meshes_to_triangles([(m, t, [1.0, 1.0, 1.0]) for m in meshes])
         obstacles.append(dict(name=body_id, touch_links=list(body_state.touch_links or []), **mesh_payload(tris)))
     if static is None:
-        static = static_link_obstacles(robot_cell, robot_cell_state, group)
-    for name, tris, touch in static:
+        static = static_obstacles(robot_cell, robot_cell_state, group)
+    for item in static:
+        name, tris, touch = item[:3]
         if without_touching and touch:
             continue
         obstacles.append(dict(name=name, touch_links=touch, **mesh_payload(tris)))

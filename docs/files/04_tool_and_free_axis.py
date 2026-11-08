@@ -49,11 +49,25 @@ t0 = time.perf_counter()
 trajectory = planner.plan_cartesian_motion(waypoints, state, options={"free_axis_samples": 12})
 print("free rotation: {} points in {:.1f} ms".format(len(trajectory.points), (time.perf_counter() - t0) * 1e3))
 
-# 5. The tip follows the circle exactly; only the rotation about the tool axis changed.
+
+# 5. The tip follows the path exactly; only the rotation about the tool axis changed.
+#    (The planner adds frames between waypoints more than 1 cm apart, the `max_step`
+#    option, so there are more points than waypoints: each lies on the straight segment
+#    between two waypoints.)
+def distance_to_path(p):
+    best = float("inf")
+    for a, b in zip(frames, frames[1:]):
+        ab = [b.point[k] - a.point[k] for k in range(3)]
+        ap = [p[k] - a.point[k] for k in range(3)]
+        t = max(0.0, min(1.0, sum(x * y for x, y in zip(ab, ap)) / sum(x * x for x in ab)))
+        best = min(best, math.dist(p, [a.point[k] + t * ab[k] for k in range(3)]))
+    return best
+
+
 check = state.copy()
 worst = 0.0
-for point, frame in zip(trajectory.points, frames):
+for point in trajectory.points:
     check.robot_configuration = robot_cell.zero_configuration().merged(point)
     tcf = planner.forward_kinematics(check, TargetMode.TOOL)
-    worst = max(worst, tcf.point.distance_to_point(frame.point))
-print("largest tip position error: {:.1e} m".format(worst))
+    worst = max(worst, distance_to_path(tcf.point))
+print("largest tip distance from the path: {:.1e} m".format(worst))

@@ -49,15 +49,16 @@ from compas_fab.robots import PointAxisTarget
 from compas_fab.robots import PointAxisWaypoints
 from compas_fab.robots import TargetMode
 
-from .model import add_attached_tools
+from .model import add_carried_objects
 from .model import exact_obstacle_meshes
 from .model import exact_robot_meshes
 from .model import frame_to_3x4
 from .model import matrix_from_3x4
+from .model import moving_link_names
 from .model import obstacle_boxes
 from .model import planning_links
 from .model import robot_description
-from .model import static_link_obstacles
+from .model import static_obstacles
 
 __all__ = ["NativeClient", "NativePlanner"]
 
@@ -136,6 +137,7 @@ class NativePlanner(
         self._robot_description = None
         self._has_static_links = False
         self._static_cache = None
+        self._moving = None
 
     # -- SetRobotCell / SetRobotCellState ---------------------------------------------
 
@@ -147,6 +149,7 @@ class NativePlanner(
         self._robot_description = robot_description(robot_cell, client.group, self.kinematics_solver, sphere_options=self.sphere_options)
         self._has_static_links = bool(planning_links(robot_cell, client.group)[1])
         self._static_cache = None
+        self._moving = None
         client.core = None
         client._tool_key = None
         self.set_robot_cell_state(robot_cell_state or robot_cell.default_cell_state())
@@ -154,8 +157,9 @@ class NativePlanner(
     def set_robot_cell_state(self, robot_cell_state, options: Optional[dict] = None):
         client: NativeClient = self.client
         client._robot_cell_state = robot_cell_state
-        # Tools change the robot's own spheres: rebuild the core when the attached tools change.
-        tool_key = tuple(sorted((tid, str(ts.attached_to_group), bool(ts.is_hidden), str(ts.attachment_frame)) for tid, ts in robot_cell_state.tool_states.items()))
+        # What the robot carries changes its own spheres: rebuild the core when any
+        # attachment changes.
+        tool_key = self._attachment_key(robot_cell_state)
         scene_key = (
             str(robot_cell_state.robot_base_frame),
             tuple(
@@ -168,7 +172,7 @@ class NativePlanner(
         )
         if client.core is None or tool_key != client._tool_key:
             description = json.loads(json.dumps(self._robot_description))
-            add_attached_tools(description, client.robot_cell, robot_cell_state, client.group, sphere_options=self.sphere_options)
+            add_carried_objects(description, client.robot_cell, robot_cell_state, client.group, sphere_options=self.sphere_options)
             client.core = _native().NativeCore(json.dumps(description), self._scene_json(robot_cell_state))
             self._update_esdf(robot_cell_state)
             if self.exact:
@@ -185,20 +189,66 @@ class NativePlanner(
             client._scene_key = scene_key
         client.core.set_passive_joints(self._passive_values(robot_cell_state))
 
+    def _attachment_key(self, robot_cell_state):
+        """Tools and rigid bodies: what they are attached to, where, and whether shown."""
+        tools = tuple(
+            sorted(
+                (
+                    tid,
+                    str(ts.attached_to_group),
+                    bool(ts.is_hidden),
+                    str(ts.attachment_frame),
+                    "" if ts.attached_to_group else str(ts.frame),
+                    tuple(ts.touch_links or ()),
+                    str(ts.configuration),
+                )
+                for tid, ts in robot_cell_state.tool_states.items()
+            )
+        )
+        bodies = tuple(
+            sorted(
+                (bid, str(bs.attached_to_link), str(bs.attached_to_tool), str(bs.attachment_frame), bool(bs.is_hidden), tuple(bs.touch_links or ()))
+                for bid, bs in robot_cell_state.rigid_body_states.items()
+                if bs.attached_to_link or bs.attached_to_tool
+            )
+        )
+        return tools, bodies
+
+    def _mounted_elsewhere(self, robot_cell_state):
+        """True if a tool or body sits on a part of the robot the group does not move (so
+        its pose depends on joints outside the group)."""
+        group = self.client.group
+        tool_groups = {tid: ts.attached_to_group for tid, ts in robot_cell_state.tool_states.items()}
+        if any(g and g != group for g in tool_groups.values()):
+            return True
+        bodies = [bs for bs in robot_cell_state.rigid_body_states.values() if bs.attached_to_link or bs.attached_to_tool]
+        if not bodies:
+            return False
+        moving = self._moving_links()
+        return any((bs.attached_to_link and bs.attached_to_link not in moving) or (bs.attached_to_tool and tool_groups.get(bs.attached_to_tool) != group) for bs in bodies)
+
+    def _moving_links(self):
+        if self._moving is None:
+            self._moving = moving_link_names(self.client.robot_cell, self.client.group)
+        return self._moving
+
     def _static_key(self, robot_cell_state):
-        """The joint values that pose the links the group cannot move (none for most cells)."""
-        if not self._has_static_links:
-            return None
+        """What poses the static obstacles: the attachments, and the joint values if any
+        static obstacle hangs on the robot (links the group cannot move, other groups'
+        tools). Constant for a single robot with its own tool, so moving it never
+        rebuilds the scene."""
+        attachments = self._attachment_key(robot_cell_state)
+        if not self._has_static_links and not self._mounted_elsewhere(robot_cell_state):
+            return attachments, None
         config = robot_cell_state.robot_configuration
-        return tuple(zip(config.joint_names, (round(v, 9) for v in config.joint_values))) if config and config.joint_names else None
+        values = tuple(zip(config.joint_names, (round(v, 9) for v in config.joint_values))) if config and config.joint_names else None
+        return attachments, values
 
     def _static(self, robot_cell_state):
-        """``static_link_obstacles``, recomputed only when the joints posing them change."""
-        if not self._has_static_links:
-            return []
+        """``static_obstacles``, recomputed only when what poses them changes."""
         key = self._static_key(robot_cell_state)
         if self._static_cache is None or self._static_cache[0] != key:
-            self._static_cache = (key, static_link_obstacles(self.client.robot_cell, robot_cell_state, self.client.group))
+            self._static_cache = (key, static_obstacles(self.client.robot_cell, robot_cell_state, self.client.group))
         return self._static_cache[1]
 
     def _passive_values(self, robot_cell_state) -> dict:

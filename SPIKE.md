@@ -480,6 +480,18 @@ Follow-ups done since:
   by 5, 10, 20, 30 mm, falling back to the plain ones if the start or every goal then
   collides. A test (`test_esdf_obstacles_keep_holes_open`) passed for 2 of 6 sphere seeds:
   its 0.22 m ring left the UR5 wrist millimetres; it now uses 0.25 m.
+- **Carried and surrounding objects (gap found while testing workpiece mode):** rigid
+  bodies attached to a link or a tool were skipped entirely, so a workpiece in the
+  gripper was never collision-checked; tools on other robots and parked tools were
+  ignored too. Now everything the planning group carries (its tool, what the tool holds,
+  bodies on its links) gets spheres and exact meshes on the carrying link, and everything
+  else (other groups' tools and what they hold, bodies on links the group cannot move,
+  parked tools) is an obstacle posed with `RobotCell.compute_attach_objects_frames`. The
+  per-link sphere budget keeps room for a tool and a workpiece.
+- **Continuous joints:** compas_robots reads a continuous joint's `<limit>` tag (which
+  carries only effort and velocity) as bounds 0..0, so the core locked such joints at
+  zero. They now get ±2π.
+
 - **Open: big flat links.** Self-collision spheres are inscribed, and 12 of them leave
   10-20 cm gaps at the faces of a large box like an RFL carriage, so the sphere model lets
   robot 11's carriage slide into robot 12's; the exact check catches it, after RRT has

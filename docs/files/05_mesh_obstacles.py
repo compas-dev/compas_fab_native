@@ -21,9 +21,11 @@ from compas_fab.robots import RigidBodyState
 from compas_fab.robots import RobotCellLibrary
 from compas_fab.robots import TargetMode
 
-# 1. A ring (44 cm across, tube 5 cm thick) lying flat in front of the robot.
+# 1. A ring (50 cm across, tube 5 cm thick) lying flat in front of the robot. (Much
+#    narrower and the UR5's wrist only just fits: whether it passes then depends on details
+#    of the sphere fit.)
 robot_cell, _ = RobotCellLibrary.ur5()
-robot_cell.rigid_body_models["ring"] = RigidBody.from_mesh(Torus(0.22, 0.025).to_mesh(u=48, v=12, triangulated=True))
+robot_cell.rigid_body_models["ring"] = RigidBody.from_mesh(Torus(0.25, 0.025).to_mesh(u=48, v=12, triangulated=True))
 state = robot_cell.default_cell_state()
 state.rigid_body_states["ring"] = RigidBodyState(Frame([0.45, 0.0, 0.45], [1, 0, 0], [0, 1, 0]))
 

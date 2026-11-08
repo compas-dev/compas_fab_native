@@ -575,3 +575,122 @@ def test_sphere_fit_is_cached_in_memory_and_on_disk(tmp_path, monkeypatch):
     second.set_robot_cell(cell, state)
     assert second._robot_description["spheres"] == first._robot_description["spheres"]
     assert second._robot_description["self_spheres"] == first._robot_description["self_spheres"]
+
+
+# -- What the robot carries, and what stands around it --------------------------------------
+
+
+def _box_body(size):
+    return RigidBody.from_mesh(Box(size, size, size).to_mesh(triangulated=True))
+
+
+def _cone_cell_with_workpiece():
+    """UR5 with the cone tool, holding a 0.12 m cube 0.25 m beyond the tool tip."""
+    cell, state = RobotCellLibrary.ur5_cone_tool()
+    cell.rigid_body_models["workpiece"] = _box_body(0.12)
+    state.rigid_body_states["workpiece"] = RigidBodyState(None)
+    state.set_rigid_body_attached_to_tool("workpiece", "cone", Frame([0, 0, 0.25], [1, 0, 0], [0, 1, 0]))
+    state.robot_configuration = cell.zero_configuration()
+    state.robot_configuration.joint_values = [0.0, -1.2, 1.5, -1.9, -1.57, 0.0]
+    return cell, state
+
+
+def _posed(cell, state, body_id):
+    return cell.compute_attach_objects_frames(state).rigid_body_states[body_id].frame
+
+
+def test_a_carried_workpiece_collides_with_obstacles():
+    cell, state = _cone_cell_with_workpiece()
+    cell.rigid_body_models["post"] = _box_body(0.05)
+    state.rigid_body_states["post"] = RigidBodyState(Frame([3, 3, 3], [1, 0, 0], [0, 1, 0]))
+    workpiece = _posed(cell, state, "workpiece")
+    planner = NativePlanner(UR5Kinematics())
+    # The post where the workpiece is (and nothing else of the robot is).
+    state.rigid_body_states["post"].frame = Frame(workpiece.point, [1, 0, 0], [0, 1, 0])
+    planner.set_robot_cell(cell, state)
+    with pytest.raises(CollisionCheckError):
+        planner.check_collision(state)
+    with pytest.raises(CollisionCheckError):
+        planner.check_collision(state, {"exact": True})
+    # Without the workpiece, the post is in nobody's way.
+    state.rigid_body_states["workpiece"].attached_to_tool = None
+    state.rigid_body_states["workpiece"].frame = Frame([3, 3, 3], [1, 0, 0], [0, 1, 0])
+    planner.check_collision(state)
+    planner.check_collision(state, {"exact": True})
+
+
+def test_workpiece_target_mode():
+    """Targets for the workpiece's own frame (OCF), through tool and grasp."""
+    cell, state = _cone_cell_with_workpiece()
+    planner = NativePlanner(UR5Kinematics())
+    planner.set_robot_cell(cell, state)
+    frame = Frame([0.35, 0.2, 0.25], [1, 0, 0], [0, -1, 0])
+    solutions = list(planner.iter_inverse_kinematics(FrameTarget(frame, TargetMode.WORKPIECE), state))
+    assert solutions
+    for config in solutions:
+        assert frames_close(_reached(planner, state, config, mode=TargetMode.WORKPIECE), frame)
+    # Point-axis waypoints for the workpiece, with numerical IK: the free rotation is
+    # about the workpiece's z axis.
+    points = [(0.35, -0.1 + 0.2 * i / 10, 0.25) for i in range(11)]
+    waypoints = PointAxisWaypoints([(p, [0, 0, -1]) for p in points], TargetMode.WORKPIECE)
+    trajectory = planner.plan_cartesian_motion(waypoints, state, options={"ik": "numeric", "max_step": 0})
+    for point, p in zip(trajectory.points, points):
+        ocf = _reached(planner, state, point, mode=TargetMode.WORKPIECE)
+        assert ocf.point.distance_to_point(p) < 1e-6
+        assert ocf.zaxis.dot([0, 0, -1]) > 1 - 1e-9
+
+
+def test_a_body_attached_to_a_link_moves_with_it():
+    cell, state = RobotCellLibrary.ur5()
+    cell.rigid_body_models["sensor"] = _box_body(0.1)
+    cell.rigid_body_models["post"] = _box_body(0.05)
+    state.rigid_body_states["sensor"] = RigidBodyState(None)
+    state.set_rigid_body_attached_to_link("sensor", "forearm_link", Frame([0, 0.15, 0.2], [1, 0, 0], [0, 1, 0]))
+    state.robot_configuration = cell.zero_configuration()
+    state.robot_configuration.joint_values = [0.0, -1.2, 1.5, -1.9, -1.57, 0.0]
+    state.rigid_body_states["post"] = RigidBodyState(Frame([3, 3, 3], [1, 0, 0], [0, 1, 0]))
+    sensor = _posed(cell, state, "sensor")
+    state.rigid_body_states["post"].frame = Frame(sensor.point, [1, 0, 0], [0, 1, 0])
+    planner = NativePlanner(UR5Kinematics())
+    planner.set_robot_cell(cell, state)
+    with pytest.raises(CollisionCheckError):
+        planner.check_collision(state)
+    # Turn the base: the sensor leaves the post behind.
+    moved = state.copy()
+    moved.robot_configuration.joint_values = [1.5, -1.2, 1.5, -1.9, -1.57, 0.0]
+    planner.check_collision(moved)
+
+
+def test_a_parked_tool_is_an_obstacle():
+    cell, state = RobotCellLibrary.ur5_cone_tool()
+    state.robot_configuration = cell.zero_configuration()
+    state.robot_configuration.joint_values = [0.0, -1.2, 1.5, -1.9, -1.57, 0.0]
+    planner = NativePlanner(UR5Kinematics())
+    # Park the tool (detached: no touch links) across the forearm.
+    forearm = cell.robot_model.forward_kinematics(state.robot_configuration, "forearm_link")
+    state.set_tool_detached("cone", Frame(forearm.point + forearm.zaxis * 0.2, [1, 0, 0], [0, 1, 0]))
+    planner.set_robot_cell(cell, state)
+    with pytest.raises(CollisionCheckError):
+        planner.check_collision(state)
+    state.tool_states["cone"].frame = Frame([3, 3, 3], [1, 0, 0], [0, 1, 0])
+    planner.check_collision(state)
+
+
+def test_continuous_joints_turn_past_half_a_turn():
+    """compas_robots reads a continuous joint's limit tag as bounds 0..0; the joint must
+    still turn, and past pi."""
+    from compas_fab.robots import ConfigurationTarget
+    from compas_robots.model import Joint
+    from compas_robots.model import Limit
+
+    cell, state = RobotCellLibrary.ur5()
+    joint = cell.robot_model.get_joint_by_name("shoulder_pan_joint")
+    joint.type = Joint.CONTINUOUS
+    joint.limit = Limit(effort=150.0, velocity=3.15, lower=0.0, upper=0.0)
+    planner = NativePlanner(UR5Kinematics())
+    planner.set_robot_cell(cell, state)
+    assert planner._robot_description["joint_limits"][0] == [-2 * math.pi, 2 * math.pi]
+    goal = cell.zero_configuration()
+    goal.joint_values = [4.0, -1.2, 1.5, -1.9, -1.57, 0.0]
+    trajectory = planner.plan_motion(ConfigurationTarget(goal), state)
+    assert abs(trajectory.points[-1].joint_values[0] - 4.0) < 1e-9

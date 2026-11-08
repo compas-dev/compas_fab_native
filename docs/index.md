@@ -6,8 +6,11 @@ backend API, but what it supports is limited (see below) and may change.
 
 ## When to use
 
-- Cartesian paths (lines, spirals, toolpaths) for 6-axis arms, fast.
+- Cartesian paths (lines, spirals, toolpaths), fast: frame or point-axis waypoints, for
+  6-axis arms, redundant arms and robots on external axes.
 - Free motion between configurations, frames or point-axis targets, around obstacles.
+- Inverse kinematics for any serial robot: closed form where there is one, numerical
+  otherwise.
 - Checking many configurations for collisions at once.
 - Obstacles with holes or concave shapes, through distance fields.
 - Trying it out and telling us what breaks.
@@ -16,10 +19,10 @@ backend API, but what it supports is limited (see below) and may change.
 
 | What you get | What you give up |
 |---|---|
-| Cartesian paths in milliseconds, through the compas_fab API | Frame targets and Cartesian paths need a 6-axis arm: UR (offset wrist) or spherical wrist |
+| Cartesian paths in milliseconds, through the compas_fab API | Robots without a closed form follow the path from a few starting solutions: a path that needs the arm to reconfigure on the way may not be found |
 | Free motion in milliseconds, for any serial robot, timed under velocity and acceleration limits | No jerk limits yet |
-| Closed-form IK derived from the robot model for spherical-wrist arms | |
-| Sphere-model collision checks for thousands of configurations per millisecond, validated on exact meshes | Attached workpieces are ignored (tools are supported) |
+| Closed-form IK for UR (offset wrist) and spherical-wrist arms; numerical IK (collision-aware) for every other robot | Numerical IK finds solutions from seeds: "no solution" means none was found, not that none exists |
+| Sphere-model collision checks for thousands of configurations per millisecond, validated on exact meshes, including tools and workpieces the robot carries | Large flat links (gantry carriages) are approximated loosely; the exact check catches what the spheres miss, at the cost of slower plans |
 | Mesh obstacles with holes (distance fields) | Experimental: not on PyPI, built from source |
 
 ## Setup
@@ -54,17 +57,29 @@ Each example builds on the previous one and explains what the planner does as it
 ## How it works, in short
 
 1. `set_robot_cell` fits spheres inside every link mesh and sends the robot, its meshes and
-   the obstacles to the core.
-2. IK is closed-form: ported for UR arms, derived from the model for spherical-wrist arms.
-3. A Cartesian request solves IK for every waypoint (and every sampled rotation about the
-   tool axis), checks all solutions for collisions in one batch, and searches for the
-   smoothest sequence through them.
+   the obstacles to the core. Sphere fits are cached (in memory and in
+   `~/.cache/compas_fab/native_spheres`; `COMPAS_FAB_NATIVE_CACHE=0` turns that off), so
+   setting up the same cell again takes milliseconds. Tools and workpieces the planning
+   group carries get spheres on the link that carries them; everything that stands still
+   while it plans (other robots of the cell, their tools, parked tools) becomes an
+   obstacle.
+2. IK is closed-form where possible: ported for UR arms, derived from the model for
+   spherical-wrist arms. Other robots (a 7-axis arm, a robot on a gantry) get numerical IK:
+   a least-squares solve that also keeps the robot clear of collisions. `options={"ik":
+   "numeric"}` uses it for any robot.
+3. A Cartesian request first fills in frames between the waypoints (every `max_step`, 1 cm
+   by default, and `max_step_angle`, 0.1 rad), so the tool moves in straight lines. With
+   closed-form IK it solves every frame (and every sampled rotation about the tool axis),
+   checks all solutions for collisions in one batch, and searches for the smoothest
+   sequence through them. With numerical IK it follows the path from several starting
+   solutions and keeps the best. Point-axis waypoints leave the rotation about the axis
+   free.
 4. The chosen path is validated on the exact meshes; if a configuration collides there,
    the search continues without it.
 5. Free motion tries the straight joint-space motion first, then RRT-Connect from the start
    and from every goal at once, then shortcutting and smoothing, and checks the result on
-   the exact meshes. Its collision checks run 8 configurations at a time in SIMD and stop
-   at the first contact.
+   the exact meshes (if it touches them, it plans again with a safety margin). Its
+   collision checks run 8 configurations at a time in SIMD and stop at the first contact.
 6. The path is then timed: corners are rounded off within a tolerance (if the rounded
    corner is collision-free), and the speed along the path is the fastest the joint
    velocity and acceleration limits allow, starting and ending at rest.
