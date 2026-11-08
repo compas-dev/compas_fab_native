@@ -23,8 +23,33 @@ PALETTES = {
         "wrist_3_link": "#3d6f9e",
         "base_link_inertia": "#3d6f9e",
     },
+    # Prefix rules end in "*"; the longest matching prefix wins.
+    "rfl": {
+        "*": "#e7e4de",
+        "robot12_*": "#c9c8c4",
+        "robot2*": "#c9c8c4",
+        "bridge*": "#5b6670",
+        "x_rail": "#5b6670",
+        "robot11_xy_cart": "#46515b",
+        "robot12_xy_cart": "#46515b",
+        "robot21_xy_cart": "#46515b",
+        "robot22_xy_cart": "#46515b",
+        "robot11_base": "#46515b",
+        "robot12_base": "#46515b",
+        "robot21_base": "#46515b",
+        "robot22_base": "#46515b",
+        "world": "#9d9a93",
+    },
     "panda": {"*": "#e4e6ea", "panda_link0": "#e4e6ea", "panda_hand": "#2d3036", "panda_leftfinger": "#2d3036", "panda_rightfinger": "#2d3036", "panda_link7": "#2d3036"},
 }
+
+
+def link_color(palette, name):
+    colors = PALETTES[palette]
+    if name in colors:
+        return colors[name]
+    prefixes = [k for k in colors if k.endswith("*") and k != "*" and name.startswith(k[:-1])]
+    return colors[max(prefixes, key=len)] if prefixes else colors["*"]
 
 
 def mesh_json(tris, decimals=5):
@@ -47,7 +72,6 @@ def robot_parts(cell, core, palette, state=None, visual=True):
     """One mesh per link with geometry (link coordinates), plus attached tools on the
     end-effector link."""
     by_name = {link.name: link for link in cell.robot_model.links}
-    colors = PALETTES[palette]
     parts = []
     for index, name in enumerate(core.link_names):
         link = by_name.get(name)
@@ -57,7 +81,7 @@ def robot_parts(cell, core, palette, state=None, visual=True):
         tris = meshes_to_triangles(collision_items(elements)) if elements else []
         m = mesh_json(tris)
         if m is not None:
-            parts.append({"guid": "link:" + name, "name": name, "link": index, "mesh": m, "color": colors.get(name, colors["*"])})
+            parts.append({"guid": "link:" + name, "name": name, "link": index, "mesh": m, "color": link_color(palette, name)})
     if state is not None:
         for tool_id, ts in state.tool_states.items():
             if ts.attached_to_group and not ts.is_hidden:
@@ -66,6 +90,28 @@ def robot_parts(cell, core, palette, state=None, visual=True):
                 tris = tris @ t[:3, :3].T + t[:3, 3]
                 parts.append({"guid": "tool:" + tool_id, "name": tool_id, "link": core.end_effector_link, "mesh": mesh_json(tris), "color": "#f2b705"})
     return parts
+
+
+def static_link_bodies(cell, state, core, palette, visual=True):
+    """The links the planning group cannot move (the other robots of a multi-robot cell,
+    rails, the hall), as bodies posed once at the state's configuration."""
+    from scenarios import Body  # noqa: F401  (avoid a cycle at import time)
+
+    planned = set(core.link_names)
+    config = state.robot_configuration
+    joint_state = dict(zip(config.joint_names, config.joint_values))
+    bodies = []
+    for link in cell.robot_model.links:
+        if link.name in planned:
+            continue
+        elements = link.visual if visual and link.visual else link.collision
+        if not elements:
+            continue
+        t = np.array(Transformation.from_frame(cell.robot_model.forward_kinematics(joint_state, link.name)).matrix)
+        tris = meshes_to_triangles([(m, t @ tm, s) for m, tm, s in collision_items(elements)])
+        if len(tris):
+            bodies.append(Body("static:" + link.name, link.name, tris, link_color(palette, link.name), Frame.worldXY(), flat=link.name == "world"))
+    return bodies
 
 
 def frame_rows(frame):

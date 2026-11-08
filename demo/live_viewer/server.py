@@ -78,6 +78,8 @@ class Session:
             await self.select(msg["id"])
         elif kind == "moved":
             await self.moved(msg["guid"], msg["matrix"])
+        elif kind == "picked":
+            await self.picked(msg["guid"])
         elif kind == "jog":
             self.jog = (np.asarray(msg.get("twist", [0] * 6), dtype=float), time.monotonic())
         elif kind == "action":
@@ -88,6 +90,7 @@ class Session:
         if sid not in self.scenarios:
             sid = "wall"
         self.scenario = s = self.scenarios[sid]
+        s.take_updates()  # the scene carries the current colours and poses
         await self.send(s.scene_json())
         await self.pose(s.q, clearance=s.core.clearance([list(map(float, s.q))])[0])
         if s.controls.get("servo"):
@@ -107,6 +110,15 @@ class Session:
             await self.send({"type": "body", "guid": b.guid, "pose": _rows12(b.frame)})
         await self.pose(s.q, clearance=s.core.clearance([list(map(float, s.q))])[0])
         if s.on_moved(body):
+            await self.replan()
+
+    async def picked(self, guid):
+        s = self.scenario
+        body = s.bodies.get(guid)
+        if body is None or not body.clickable:
+            return
+        await self.cancel_motion()
+        if s.on_picked(body):
             await self.replan()
 
     async def action(self, name, value):
@@ -132,16 +144,25 @@ class Session:
         try:
             segments, metrics = s.plan()
         except PlanFailed as e:
+            await self.flush()
             await self.send({"type": "path", "points": []})
             await self.status("failed", str(e))
             await self.flag_target(False)
             return
+        await self.flush()
+        if not segments:
+            await self.status("idle", s.ready)
+            return
         await self.flag_target(True)
         self.motion = asyncio.create_task(self.play(segments, metrics))
 
+    async def flush(self):
+        for message in self.scenario.take_updates():
+            await self.send(message)
+
     async def flag_target(self, ok):
         s = self.scenario
-        for guid in ("target", "stock", "ring"):
+        for guid in ("target", "stock", "ring", "face"):
             if guid in s.bodies:
                 await self.send({"type": "body", "guid": guid, "color": s.bodies[guid].color if ok else "#d13b3b"})
 
@@ -176,7 +197,7 @@ class Session:
                     await self.pose(s.q, qd, progress=offset + i)
                     await asyncio.sleep(DT)
                 offset += len(times)
-            await self.status("idle", "Done. Drag something to plan again.", **metrics)
+            await self.status("idle", self.scenario.done, **metrics)
         except asyncio.CancelledError:
             raise
 

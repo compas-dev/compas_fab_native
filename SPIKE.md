@@ -429,13 +429,34 @@ Follow-ups done since:
   Vertices that turn by less than 1e-6 rad are passed straight through; they used to be
   full stops. `time_parameterize` also reports `stops` per vertex. Regression test:
   `collinear_vertices_are_passed_through`.
-- **Live demo** (`demo/live_viewer`): the five scenarios (UR5 around a wall, Panda around a
-  post, servoing a Panda, milling a spiral, plunging through a ring) are planned while you
-  drag targets and obstacles in a compas_threejs_ts viewer, and streamed over a websocket at
-  60 Hz. Planning takes 1 to 45 ms, except the Panda's numeric IK (about 120 ms in Python).
+- **Live demo** (`demo/live_viewer`): six scenarios (UR5 around a wall, Panda around a
+  post, servoing a Panda, milling a spiral, plunging through a ring, the RFL touching
+  cubes) are planned while you drag targets and obstacles (or click cubes) in a
+  compas_threejs_ts viewer, and streamed over a websocket at 60 Hz. Planning takes 1 to
+  110 ms, except numeric IK in Python (Panda about 120 ms) and the RFL (about 200 ms, most
+  of it scene updates for the touch).
   ESDF note from the ring: with 2 cm voxels and a 1 cm margin the sphere search can graze a
   5 cm tube that the exact check then rejects (5 wasted attempts). The demo uses 1.5 cm
   voxels with a 1.5 cm margin. The default margin should probably scale with the voxel size.
+
+- **Multi-robot cells (found by the RFL demo):** the RFL has 44 links, more than the
+  core's 32, and its spheres would exceed the 256 per robot. The description now keeps
+  only the links the planning group moves, and their ancestors as geometry-free frames.
+  Every other link (the other bridge and its robots, the rails, the hall) becomes a static
+  obstacle posed at the state's configuration, split into connected parts (one box per
+  hall column, not one around the hall). Static links may touch their neighbours and the
+  links the SRDF disables collisions with, as before. Cells without such links (every
+  single robot) are described exactly as before. Spheres per link are capped so a large
+  tree stays within budget. Obstacles are cached until joints outside the group change.
+  Test: `test_multi_robot_cell_plans_one_gantry_robot`.
+- **Tight boxes for tilted cubes:** `oriented_box` took the principal axes, which are
+  arbitrary for a cube (equal variances), so a tilted 0.32 m cube got a box up to sqrt(3)
+  too big, and the robot could not get near it. It now keeps the smallest of the principal
+  axes, the coordinate axes and the body's own frame. Test:
+  `test_a_tilted_cube_gets_a_tight_box`.
+- **Touch links reach the core:** `set_robot_cell_state` decided whether to rebuild the
+  scene from frames, attachments and visibility, not `touch_links`, so changing only a
+  body's touch links had no effect. Test: `test_changing_touch_links_reaches_the_core`.
 
 ## Open issues and next steps
 

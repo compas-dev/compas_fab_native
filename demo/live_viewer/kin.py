@@ -65,20 +65,30 @@ class Arm:
     def clip(self, q) -> np.ndarray:
         return np.clip(q, self.lower, self.upper)
 
-    def ik(self, target, seeds, max_solutions=8, max_iterations=120, damping=0.02):
+    def ik(self, target, seeds, max_solutions=8, max_iterations=120, damping=0.02, free_z=False):
         """Distinct solutions for the TCP at ``target`` (4x4), by damped least squares from
-        each seed in turn. Solutions are within joint limits; collisions are not checked."""
+        each seed in turn. Solutions are within joint limits; collisions are not checked.
+
+        With ``free_z``, only the TCP's z axis has to match the target's: the rotation
+        about it is left free (a point-and-axis target)."""
         found = []
+        z = target[:3, 2]
+        free = np.eye(3) - np.outer(z, z)
         for seed in seeds:
             q = self.clip(np.asarray(seed, dtype=float))
             for _ in range(max_iterations):
                 current = self.fk(q)
-                e = pose_error(target, current)
+                if free_z:
+                    e = np.concatenate([target[:3, 3] - current[:3, 3], np.cross(current[:3, 2], z)])
+                else:
+                    e = pose_error(target, current)
                 if np.linalg.norm(e[:3]) < 1e-4 and np.linalg.norm(e[3:]) < 1e-3:
                     if all(np.max(np.abs(q - f)) > 0.05 for f in found):
                         found.append(q.copy())
                     break
                 jac = self.jacobian(q, current)
+                if free_z:
+                    jac[3:] = free @ jac[3:]  # no rotation about the axis is asked for
                 dq = jac.T @ np.linalg.solve(jac @ jac.T + damping**2 * np.eye(6), e)
                 step = np.max(np.abs(dq))
                 if step > 0.4:

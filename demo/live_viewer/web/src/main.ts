@@ -33,6 +33,7 @@ interface Body {
   color: string;
   pose: number[];
   draggable: boolean;
+  clickable: boolean;
   opacity: number;
   flat: boolean;
 }
@@ -41,6 +42,7 @@ interface Joints {
   lower: number[];
   upper: number[];
   vmax: number[];
+  prismatic: boolean[];
 }
 interface SceneMsg {
   type: "scene";
@@ -49,6 +51,7 @@ interface SceneMsg {
   hint: string;
   controls: { servo?: boolean; obstacles?: string[]; mode?: string };
   camera: { position: number[]; target: number[] };
+  scale: number;
   joints: Joints;
   parts: Part[];
   bodies: Body[];
@@ -78,6 +81,7 @@ const command = (message: Record<string, unknown>) => viewer.dispatch(pbDump(mes
  * be sent as the delta `apply_transform` expects. */
 const placed = new Map<string, Matrix4>();
 const draggable = new Set<string>();
+const clickable = new Set<string>();
 let parts: Part[] = [];
 let joints: Joints | null = null;
 let current: SceneMsg | null = null;
@@ -220,7 +224,10 @@ function onViewerMessage(message: unknown): boolean {
   if (location.hash === "#debug") console.log("viewer →", JSON.stringify(m).slice(0, 200));
   const guid = m.guid as string | undefined;
   if (!guid) return true;
-  if (m.dispatch === "object_picked" && !draggable.has(guid)) {
+  if (m.dispatch === "object_picked" && clickable.has(guid)) {
+    send({ type: "picked", guid });
+    dropPick();
+  } else if (m.dispatch === "object_picked" && !draggable.has(guid)) {
     dropPick();
   } else if (m.dispatch === "object_transform") {
     const before = placed.get(guid);
@@ -302,7 +309,7 @@ function handle(msg: Record<string, unknown>) {
     case "path":
       path = msg.points as number[];
       drawnProgress = -1;
-      tube("path:plan", path, "#8a939e", 0.0018);
+      tube("path:plan", path, "#8a939e", 0.0018 * (current?.scale ?? 1));
       if (placed.has("path:done")) remove("path:done");
       break;
     case "status":
@@ -314,6 +321,7 @@ function handle(msg: Record<string, unknown>) {
 function loadScene(scene: SceneMsg) {
   for (const guid of [...placed.keys()]) remove(guid);
   draggable.clear();
+  clickable.clear();
   current = scene;
   wanted = scene.id;
   history.replaceState(null, "", `?scenario=${scene.id}${location.hash}`);
@@ -324,6 +332,7 @@ function loadScene(scene: SceneMsg) {
     addMesh(body.guid, body.name, body.mesh, body.color, body.opacity, body.flat);
     setPose(body.guid, from12(body.pose));
     if (body.draggable) draggable.add(body.guid);
+    if (body.clickable) clickable.add(body.guid);
   }
   const [px, py, pz] = scene.camera.position;
   const [tx, ty, tz] = scene.camera.target;
@@ -343,7 +352,7 @@ function onPose(msg: Record<string, unknown>) {
   const progress = msg.progress as number | undefined;
   const now = performance.now();
   if (progress !== undefined && path.length && progress !== drawnProgress && now - lastPathDraw > 80) {
-    tube("path:done", path.slice(0, (progress + 1) * 3), "#f2b705", 0.0028);
+    tube("path:done", path.slice(0, (progress + 1) * 3), "#f2b705", 0.0028 * (current?.scale ?? 1));
     drawnProgress = progress;
     lastPathDraw = now;
   }
@@ -413,7 +422,7 @@ function renderScenarioPanel(scene: SceneMsg) {
   if (scene.controls.servo) {
     controls.append(servoPad());
     controls.append(button("Home", () => send({ type: "action", name: "home" }), true));
-  } else {
+  } else if (!scene.bodies.some((b) => b.clickable)) {
     controls.append(button("Plan again", () => send({ type: "action", name: "replay" }), true));
   }
   controls.append(button("Reset scene", () => send({ type: "action", name: "reset" })));
@@ -426,6 +435,7 @@ const METRICS: [string, string, (v: number) => string][] = [
   ["goals", "IK goals", (v) => String(v)],
   ["iterations", "RRT iters", (v) => (v === 0 ? "direct" : String(v))],
   ["waypoints", "Waypoints", (v) => String(v)],
+  ["face", "Face", (v) => `${v} of 6`],
 ];
 
 function setStatus(state: string, text: string, metrics?: Record<string, number>) {
@@ -464,7 +474,8 @@ function renderJoints(j: Joints) {
       row.className = "joint";
       row.title = name;
       const zero = ((0 - j.lower[i]) / (j.upper[i] - j.lower[i])) * 100;
-      row.innerHTML = `<span class="name">j${i + 1}</span>
+      const label = j.prismatic?.[i] ? (name.match(/_([XYZ])$/)?.[1] ?? `p${i + 1}`) : `j${i + 1 - (j.prismatic?.filter(Boolean).length ?? 0)}`;
+      row.innerHTML = `<span class="name">${label}</span>
         <div class="bars"><div class="pos-track"><div class="pos-zero" style="left:${zero}%"></div><div class="pos-mark"></div></div>
         <div class="vel-track"><div class="vel-bar"></div></div></div>
         <span class="value">–</span>`;
@@ -481,7 +492,7 @@ function updateJoints(q: number[], qd?: number[]) {
     if (!row) return;
     const t = (v - joints!.lower[i]) / (joints!.upper[i] - joints!.lower[i]);
     row.mark.style.left = `${Math.min(100, Math.max(0, t * 100))}%`;
-    row.value.textContent = `${((v * 180) / Math.PI).toFixed(1)}°`;
+    row.value.textContent = joints!.prismatic?.[i] ? `${v.toFixed(2)} m` : `${((v * 180) / Math.PI).toFixed(1)}°`;
     if (qd) {
       const s = Math.min(1, Math.abs(qd[i]) / joints!.vmax[i]);
       row.vel.style.width = `${s * 100}%`;

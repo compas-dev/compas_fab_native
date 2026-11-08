@@ -48,7 +48,7 @@ class PlanFailed(Exception):
 class Body:
     """Something the browser draws: a rigid body of the cell, a target marker, a guide."""
 
-    def __init__(self, guid, name, tris, color, frame, draggable=False, body_id=None, opacity=1.0, flat=False):
+    def __init__(self, guid, name, tris, color, frame, draggable=False, body_id=None, opacity=1.0, flat=False, clickable=False):
         self.guid = guid
         self.name = name
         self.tris = tris
@@ -59,6 +59,7 @@ class Body:
         self.body_id = body_id
         self.opacity = opacity
         self.flat = flat
+        self.clickable = clickable
 
     def json(self):
         return {
@@ -68,6 +69,7 @@ class Body:
             "color": self.color,
             "pose": frame_rows(self.frame),
             "draggable": self.draggable,
+            "clickable": self.clickable,
             "opacity": self.opacity,
             "flat": self.flat,
         }
@@ -89,10 +91,15 @@ class Scenario:
     palette = "ur5"
     controls = {}
     camera = {"position": [0.55, -1.75, 0.95], "target": [0.3, 0.0, 0.4]}
+    scale = 1.0  # of the scene, for the browser (path thickness)
+    done = "Done. Drag something to plan again."
+    ready = "Ready."
+    group = None
 
     def __init__(self):
         self.bodies = {}
         self.q = None
+        self.updates = []  # body messages for the browser, sent after the next plan
         self.setup()
         self._parts = robot_parts(self.cell, self.core, self.palette, self.state)
         self.reset()
@@ -123,7 +130,8 @@ class Scenario:
             "names": names,
             "lower": [model[n].limit.lower for n in names],
             "upper": [model[n].limit.upper for n in names],
-            "vmax": [model[n].limit.velocity for n in names],
+            "vmax": self.limits()[0],
+            "prismatic": [int(model[n].type) == 2 for n in names],
         }
 
     def make_arm(self, tcf=None):
@@ -153,6 +161,7 @@ class Scenario:
             "hint": self.hint,
             "controls": self.controls,
             "camera": self.camera,
+            "scale": self.scale,
             "joints": self.joints(),
             "parts": self._parts,
             "bodies": [b.json() for b in self.bodies.values()],
@@ -174,8 +183,13 @@ class Scenario:
         return body
 
     def limits(self, scale=1.0):
-        v = [x * scale for x in self.joints()["vmax"]]
+        model = {j.name: j for j in self.cell.robot_model.get_configurable_joints()}
+        v = [model[n].limit.velocity * scale for n in self.core.joint_names]
         return v, [2.0 * x for x in v]
+
+    def take_updates(self):
+        updates, self.updates = self.updates, []
+        return updates
 
     def time(self, path, scale=1.0, blend=0.02):
         v, a = self.limits(scale)
@@ -197,6 +211,10 @@ class Scenario:
     def on_moved(self, body):
         """Re-plan after the user moved ``body``; returns plan() or None to stay put."""
         return True
+
+    def on_picked(self, body):
+        """The user clicked a ``clickable`` body; returns whether to re-plan."""
+        return False
 
 
 # ---------------------------------------------------------------------------------------
@@ -564,6 +582,247 @@ class RingUR5(Scenario):
         return [free, plunge, {"dwell": 0.4, "label": "Through"}, retract]
 
 
+# ---------------------------------------------------------------------------------------
+# f) RFL: touch a cube
+# ---------------------------------------------------------------------------------------
+
+
+class CubesRFL(Scenario):
+    """Robot 11 of the RFL on its gantry (X bridge, Y carriage, Z column, then six axes) as
+    one 9-axis group. Robot 12 rides on the same bridge, so it moves with X; the second
+    bridge with robots 21 and 22, the rails and the hall stand still and are obstacles."""
+
+    id = "rfl"
+    title = "RFL: touch a cube"
+    hint = (
+        "Click a cube. Robot 11 drives its gantry and arm as one 9-axis group, plans around the other cubes and the hall, and touches the face turned most "
+        "towards it. Click the same cube again for its next face."
+    )
+    palette = "rfl"
+    group = "robot11_eaXYZ"
+    camera = {"position": [5.2, -6.6, 4.6], "target": [5.0, 3.0, 1.6]}
+    scale = 6.0
+    q0 = [2.0, -1.2, -3.3, 0.0, 0.2, 0.5, 0.0, 0.85, 0.0]
+    done = "On the face. Click another cube, or this one again for its next face."
+    ready = "Click a cube."
+    n_cubes = 22
+    side = 0.32
+    standoff = 0.15
+    contact = 0.008
+    gantry_speed = 0.8  # m/s, slower than the URDF's limit, for a hall-sized robot
+    arm_scale = 0.6
+
+    def setup(self):
+        from scene import static_link_bodies
+
+        self._ik_seeds_used = []
+        self.cell, self.state = RobotCellLibrary.rfl()
+        rng = np.random.default_rng(7)
+        cube = Box(self.side, self.side, self.side).to_mesh(triangulated=True)
+        centres = []
+        while len(centres) < self.n_cubes:
+            c = rng.uniform([1.4, 0.4, 0.9], [8.6, 5.4, 2.7])
+            if all(np.linalg.norm(c - o) > 0.95 for o in centres):
+                centres.append(c)
+        for i, c in enumerate(centres):
+            r = Rotation.from_rotvec(rng.normal(size=3) * 0.6).as_matrix()
+            frame = Frame(c.tolist(), r[:, 0].tolist(), r[:, 1].tolist())
+            color = CUBE_COLORS[i % len(CUBE_COLORS)]
+            self.add_body(Body("cube{}".format(i), "Cube {}".format(i + 1), compas_mesh_tris(cube), color, frame, clickable=True, flat=True), rigid=cube)
+        self.planner = NativePlanner()
+        self.planner.set_robot_cell(self.cell, self.state, options={"group": self.group})
+        self.arm = self.make_arm()
+        plate = Box(self.side * 0.8, self.side * 0.8, 0.012).to_mesh(triangulated=True)
+        self.add_body(Body("face", "Face", compas_mesh_tris(plate), ACCENT, Frame([0, 0, -40], [1, 0, 0], [0, 1, 0]), flat=True))
+        for body in static_link_bodies(self.cell, self.state, self.core, self.palette):
+            self.add_body(body)
+        self.picked = None  # (cube guid, rank of the face last tried)
+        self.touching = None  # (cube guid, outward normal) while the flange is on a face
+
+    def reset(self):
+        super().reset()
+        self.picked = None
+        self.touching = None
+
+    def limits(self, scale=1.0):
+        v, _ = super().limits(scale)
+        prismatic = [int(j.type) == 2 for j in map(self.cell.robot_model.get_joint_by_name, self.core.joint_names)]
+        v = [min(x, self.gantry_speed * scale) if p else x * self.arm_scale for x, p in zip(v, prismatic)]
+        return v, [1.5 * x for x in v]
+
+    def on_moved(self, body):
+        return False
+
+    def on_picked(self, body):
+        previous = self.picked
+        rank = previous[1] + 1 if previous and previous[0] == body.guid else 0
+        if previous and previous[0] != body.guid:
+            self.updates.append({"type": "body", "guid": previous[0], "color": self.bodies[previous[0]].color})
+        self.updates.append({"type": "body", "guid": body.guid, "color": PICKED})
+        self.picked = (body.guid, rank)
+        return True
+
+    # -- planning -----------------------------------------------------------------------
+
+    def faces(self, guid):
+        """The cube's six faces as (centre, outward normal), the face turned most towards
+        the flange (and up, as the robot hangs from the gantry) first."""
+        m = matrix_from_frame(self.bodies[guid].frame)
+        centre = m[:3, 3]
+        flange = self.arm.fk(self.q)[:3, 3]
+        towards = flange - centre
+        towards /= max(np.linalg.norm(towards), 1e-9)
+        normals = [m[:3, k] * sign for k in range(3) for sign in (1, -1)]
+        normals.sort(key=lambda n: -(float(n @ towards) + 0.6 * n[2]))
+        return [(centre + n * self.side / 2, n) for n in normals]
+
+    def seeds(self, point, n, rng):
+        """Gantry over the point, the arm somewhere in its usual range."""
+        lo, hi = self.arm.lower, self.arm.upper
+        seeds = [self.q.copy()]
+        for _ in range(n):
+            q = rng.uniform(lo, hi)
+            q[0] = point[0] + rng.uniform(-1.2, 1.2)
+            q[1] = -(point[1] + rng.uniform(-1.2, 1.2))
+            q[2] = -(point[2] + rng.uniform(0.8, 2.0))
+            q[3:] = rng.uniform([-np.pi, -0.6, -1.2, -np.pi, -2.0, -np.pi], [np.pi, 1.2, 1.0, np.pi, 2.0, np.pi])
+            seeds.append(self.arm.clip(q))
+        return seeds
+
+    def line(self, q, end, steps=10):
+        """A straight TCP line from where ``q`` puts it to ``end``, orientation held."""
+        start = self.arm.fk(q)
+        path = [np.asarray(q, dtype=float)]
+        for k in range(1, steps + 1):
+            target = start.copy()
+            target[:3, 3] = start[:3, 3] + (end - start[:3, 3]) * k / steps
+            found = self.arm.ik(target, [path[-1]], max_solutions=1, max_iterations=40)
+            if not found or np.max(np.abs(found[0] - path[-1])) > 0.3:
+                return None
+            path.append(found[0])
+        return path
+
+    def free(self, path):
+        return all(self.core.motion_free(list(map(float, a)), list(map(float, b)), None) for a, b in zip(path, path[1:]))
+
+    def touch(self, guid, on):
+        """Let the flange touch ``guid`` (the face it is pressed against) or not."""
+        self.state.rigid_body_states[guid].touch_links = ["robot11_link_6"] if on else []
+        self.planner.set_robot_cell_state(self.state)
+
+    def plan(self):
+        if self.picked is None:
+            return [], {}
+        guid, rank = self.picked
+        t0 = time.perf_counter()
+        self.set_q(self.q)
+        start = np.asarray(self.q, dtype=float)
+        touching = self.touching
+        try:
+            return self._plan_from(start, guid, rank, t0)
+        except PlanFailed:
+            self.touching = touching
+            raise
+
+    def _plan_from(self, start, guid, rank, t0):
+        segments = []
+        if self.touching is not None and self.core.clearance([list(map(float, start))])[0] > 0.005:
+            self.touching = None  # stopped before it got there
+        if self.touching is not None:
+            # On the last face (or nearly): back off it first.
+            last, normal = self.touching
+            self.touch(last, True)
+            back = self.line(start, self.arm.fk(start)[:3, 3] + normal * self.standoff)
+            ok = back is not None and self.free(back)
+            self.touch(last, False)
+            if not ok:
+                raise PlanFailed("Stuck on the last face: no straight way back.")
+            retreat = self.time(back, 0.5, blend=0.01)
+            retreat["label"] = "Back off"
+            segments.append(retreat)
+            start = back[-1]
+            self.touching = None
+        faces = self.faces(guid)
+        reason = "No face of this cube can be reached."
+        for k in range(6):
+            index = (rank + k) % 6
+            centre, normal = faces[index]
+            try:
+                plunge = self._touch_face(guid, start, centre, normal)
+            except PlanFailed as e:
+                reason = str(e)
+                continue
+            self.picked = (guid, index)
+            m = np.eye(4)
+            m[:3, :3] = _frame_with_z(normal)
+            m[:3, 3] = centre + normal * 0.007
+            self.updates.append({"type": "body", "guid": "face", "pose": frame_rows(frame_from_matrix(m))})
+            self.bodies["face"].frame = frame_from_matrix(m)
+            segments += plunge["segments"]
+            metrics = plunge["metrics"]
+            metrics["plan_ms"] = (time.perf_counter() - t0) * 1e3
+            metrics["face"] = index + 1
+            metrics["duration"] = sum(s["times"][-1] for s in segments if "times" in s) + 0.5
+            self.touching = (guid, normal)
+            self.q = start  # the session streams from here
+            return segments, metrics
+        self.bodies["face"].frame = Frame([0, 0, -40], [1, 0, 0], [0, 1, 0])
+        self.updates.append({"type": "body", "guid": "face", "pose": frame_rows(self.bodies["face"].frame)})
+        raise PlanFailed(reason)
+
+    def _touch_face(self, guid, start, centre, normal):
+        """IK for the flange over the face (axis into it, free about it), a free motion
+        there, then straight in until it touches."""
+        t0 = time.perf_counter()
+        target = np.eye(4)
+        target[:3, :3] = _frame_with_z(-normal)
+        target[:3, 3] = centre + normal * self.standoff
+        rng = np.random.default_rng(len(self._ik_seeds_used))
+        self._ik_seeds_used.append(1)
+        solutions = self.arm.ik(target, self.seeds(target[:3, 3], 16, rng), max_solutions=6, max_iterations=60, free_z=True)
+        if not solutions:
+            raise PlanFailed("Out of reach: no IK solution over any face.")
+        clearance = self.core.clearance([list(map(float, q)) for q in solutions])
+        goals = [q for q, c in zip(solutions, clearance) if c > 0.01]
+        if not goals:
+            raise PlanFailed("Every IK solution over the faces is in collision.")
+        ik_ms = (time.perf_counter() - t0) * 1e3
+        # The straight move in, from each goal, before committing to a free motion there.
+        self.touch(guid, True)
+        try:
+            ins = [(g, self.line(g, centre + normal * self.contact)) for g in goals]
+            ins = [(g, p) for g, p in ins if p is not None and self.free(p)]
+        finally:
+            self.touch(guid, False)
+        if not ins:
+            raise PlanFailed("No straight way onto a face.")
+        try:
+            path, stats = self.core.plan_motion(list(map(float, start)), [list(map(float, g)) for g, _ in ins], exact=self.core.has_exact)
+        except RuntimeError as e:
+            raise PlanFailed(_core_reason(str(e)))
+        end = np.asarray(path[-1], dtype=float)
+        approach = min(ins, key=lambda gp: np.max(np.abs(gp[0] - end)))[1]
+        free = self.time(path)
+        free["label"] = "Free motion"
+        press = self.time(approach, 0.25, blend=0.005)
+        press["label"] = "Touch"
+        segments = [free, press, {"dwell": 0.5, "label": "Touching"}]
+        return {"segments": segments, "metrics": {"ik_ms": ik_ms, "goals": len(ins), "iterations": stats.get("iterations")}}
+
+
+CUBE_COLORS = ["#c7a97a", "#b98f5c", "#d4bf98", "#a8865e"]
+PICKED = "#e0672b"
+
+
+def _frame_with_z(z):
+    """A rotation matrix whose z axis is ``z`` (x and y arbitrary but stable)."""
+    z = np.asarray(z, dtype=float) / np.linalg.norm(z)
+    helper = np.array([1.0, 0.0, 0.0]) if abs(z[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+    x = np.cross(helper, z)
+    x /= np.linalg.norm(x)
+    return np.column_stack([x, np.cross(z, x), z])
+
+
 def _floor_mesh():
     from compas.datastructures import Mesh
 
@@ -590,4 +849,4 @@ def _core_reason(message):
     return "No collision-free path found."
 
 
-SCENARIOS = [WallUR5, PostPanda, ServoPanda, MillUR5, RingUR5]
+SCENARIOS = [WallUR5, PostPanda, ServoPanda, MillUR5, RingUR5, CubesRFL]
