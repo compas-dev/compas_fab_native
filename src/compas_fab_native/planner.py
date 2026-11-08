@@ -53,7 +53,7 @@ def _native():
     try:
         import compas_fab_native
     except ImportError as e:
-        raise ImportError("The native backend needs the compas_fab_native extension (`pip install ./native` or `maturin develop -m native/pyproject.toml`).") from e
+        raise ImportError("The native backend needs the compas_fab_native extension (`pip install ./native`).") from e
     return compas_fab_native
 
 

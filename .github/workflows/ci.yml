@@ -61,7 +61,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install "maturin>=1.9,<2"
           python -m pip install -e ".[dev]"
-          maturin build --release -m native/pyproject.toml --out dist
+          (cd native && maturin build --release --out ../dist)
           python -m pip install dist/*.whl
       - name: Python tests
         run: python -m pytest tests/backends/native -v

@@ -29,7 +29,7 @@ pip install ./native
 ```
 
 This builds the `compas_fab_native` extension with maturin. For development,
-`maturin develop --release -m native/pyproject.toml` rebuilds it in place.
+`maturin develop --release`, run inside `native/`, rebuilds it in place.
 
 ## First example
 
