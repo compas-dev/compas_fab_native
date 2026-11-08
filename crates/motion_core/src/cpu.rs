@@ -235,15 +235,15 @@ pub fn query_scalar(model: &ModelBuffers, q: &[f32], out: &mut BatchOutput) {
 // ---------------------------------------------------------------------------
 // Lanes: LANES configurations at once
 
-type L = [f32; LANES];
+pub(crate) type L = [f32; LANES];
 
 #[inline(always)]
-fn splat(v: f32) -> L {
+pub(crate) fn splat(v: f32) -> L {
     [v; LANES]
 }
 
 #[inline(always)]
-fn mul34_lanes(a: &[L; 12], b: &[L; 12]) -> [L; 12] {
+pub(crate) fn mul34_lanes(a: &[L; 12], b: &[L; 12]) -> [L; 12] {
     let mut m = [splat(0.0); 12];
     for r in 0..3 {
         for c in 0..4 {
@@ -262,7 +262,7 @@ fn mul34_lanes(a: &[L; 12], b: &[L; 12]) -> [L; 12] {
 }
 
 #[inline(always)]
-fn local_transform_lanes(link: &GpuLink, q: &L) -> [L; 12] {
+pub(crate) fn local_transform_lanes(link: &GpuLink, q: &L) -> [L; 12] {
     let o = link.origin.map(splat);
     match JointType::from_u32(link.joint_type) {
         JointType::Fixed => o,
