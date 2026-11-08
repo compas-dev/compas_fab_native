@@ -23,10 +23,11 @@ native/
   fixtures/scene_boxes.json     4 cuboids (table, column, rotated beam, wall)
   crates/motion_core            layouts (layout.rs), f64 reference, CPU f32 kernels (scalar + 8-lane), sampling
   crates/motion_gpu             wgpu host code + query.wgsl (fused full, fused min-only, split)
-  crates/motion_cubecl          the same kernel in CubeCL (fused full, fused min-only, min-only specialized per robot)
   crates/motion_bench           oracle checks + timing (motion_bench), sphere vs mesh verdicts (compare_verdicts),
-                                Cartesian planner on the baseline's waypoints (cartesian_bench)
+                                Cartesian planner on the baseline's waypoints (cartesian_bench),
+                                single-threaded CPU benchmarks run by CI on every commit (ci_bench)
   crates/motion_py              PyO3 extension `compas_fab_native` (NativeCore)
+  pyproject.toml                maturin build of the extension: `pip install ./native` (abi3 wheel, Python >= 3.9)
   scripts/baseline_cartesian.py compas_fab's Cartesian planners vs NativePlanner on the same path
   results/                      raw numbers from the runs below
 
@@ -48,15 +49,16 @@ Run:
 ```bash
 cd native
 cargo test --release                      # oracle chain: compas_robots -> f64 -> f32 CPU
-cargo run --release --bin motion_bench -- --out results/<machine>.json   # MOTION_BENCH_NO_CUBECL=1 to skip CubeCL
+cargo run --release --bin motion_bench -- --out results/<machine>.json
+cargo run --release --bin ci_bench -- bench.json                          # what CI measures
 python scripts/baseline_python.py ur5 fixtures/scene_boxes.json results/baseline_python.json   # from compas_fab's venv
 cargo run --release --bin compare_verdicts -- results/baseline_python.json
 
-# Python extension + backend (no maturin needed for the spike)
-PYO3_PYTHON=../.venv/bin/python cargo build --release -p motion_py
-cp target/release/libcompas_fab_native.dylib python/compas_fab_native.abi3.so
-cd .. && PYTHONPATH=native/python python -m pytest tests/backends/native
-PYTHONPATH=native/python python native/scripts/baseline_cartesian.py native/fixtures/scene_boxes.json native/results/baseline_cartesian.json
+# Python extension + backend, from compas_fab's venv
+maturin develop --release           # or, from the repository root: pip install ./native
+cd .. && python -m pytest tests/backends/native
+python native/scripts/baseline_cartesian.py native/fixtures/scene_boxes.json native/results/baseline_cartesian.json
+for f in docs/backends/native/files/*.py; do python $f; done   # the examples
 ```
 
 ## Results (Apple M3 Max, 14 CPU threads, Metal via wgpu 30)
@@ -92,6 +94,10 @@ UR5, 32 spheres, 4 cuboids. Full table in `results/m3max.json`.
 | CubeCL fused min-only, one launch + sync | 37 k | 2.3 M | 19 M | 72 M | 147 M |
 
 ## Phase 0 gate: wgpu + WGSL or CubeCL?
+
+**Decided: wgpu + WGSL.** The CubeCL crate (`motion_cubecl`) was removed after the
+comparison below; it is in the history (commit `67ed40e24`)
+if CUDA is ever wanted for a specific kernel.
 
 Same kernel, same layout, same harness, Apple M3 Max (Metal):
 
@@ -323,12 +329,17 @@ suite is unaffected (195 passed, 22 skipped).
 - Attached workpieces are ignored by the backend; tools are supported.
 - Explicit SIMD on the CPU (finding 4); the self-collision pair loop is now the largest
   CPU cost (1,984 pairs for the UR5).
-- Packaging: maturin / abi3 wheels through compas-actions; the spike builds with cargo.
+- Packaging: `native/pyproject.toml` builds an abi3 wheel with maturin (`compas_fab_native`,
+  a separate distribution from the same repository, as pydantic does with pydantic-core).
+  Not yet: wheels for all platforms in the release workflow, and `compas_fab[native]`.
+- Sphere fitting still runs in Python (trimesh, at `set_robot_cell`: ~1.7 s for a UR5);
+  moving it to the core would drop the trimesh/rtree/scipy dependencies.
 
 ### Phase 0 leftovers
 
-- CubeCL compiling to MSL directly (`--features msl`) gave the same numbers, but I could
-  not confirm the MSL path was active; CubeCL's CPU (MLIR) runtime not tried.
 - Runs on Windows (DX12/Vulkan) and an NVIDIA machine; cuRobo and MoveIt baselines.
 - Voxel-block layout is defined (`layout.rs`) but not exercised by a kernel.
-- compas_pb messages for the model (the spike passes JSON).
+- compas_pb messages for the model (the spike passes JSON). Deferred on purpose: the
+  only consumer is the in-process Python binding, where JSON is cheap and loosely coupled.
+  compas_pb starts paying off with the first out-of-process or non-Python consumer
+  (browser/WASM, a planning service, Rhino talking to a separate process).
