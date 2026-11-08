@@ -140,10 +140,14 @@ pub fn distance_query(model: &RobotModel, scene: &Scene, q: &[f64]) -> Query {
     let frames = forward_kinematics(model, q);
     let mut dist = Vec::with_capacity(model.spheres.len());
     let mut grad = Vec::with_capacity(model.spheres.len());
-    for s in &model.spheres {
+    for (i, s) in model.spheres.iter().enumerate() {
         let c = transform_point(&frames[s.link as usize], s.center);
         let mut best = (f64::INFINITY, [0.0; 3]);
-        for b in &scene.cuboids {
+        for (k, b) in scene.cuboids.iter().enumerate() {
+            let exempt = k < 32 && scene.sphere_touch.get(i).is_some_and(|m| m & (1 << k) != 0);
+            if exempt || b.touch_links.contains(&model.links[s.link as usize].name) {
+                continue;
+            }
             let (d, g) = point_box_distance(c, &b.frame, b.half_extents);
             if d < best.0 {
                 best = (d, g);

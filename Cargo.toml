@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/motion_core", "crates/motion_gpu", "crates/motion_cubecl", "crates/motion_bench"]
+members = ["crates/motion_core", "crates/motion_gpu", "crates/motion_cubecl", "crates/motion_bench", "crates/motion_py"]
 
 [workspace.package]
 edition = "2021"

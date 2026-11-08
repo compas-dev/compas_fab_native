@@ -185,7 +185,12 @@ fn query_one(
         ];
         let mut best = f32::INFINITY;
         let mut best_g = [0.0f32; 3];
-        for b in &model.cuboids {
+        for (k, b) in model.cuboids.iter().enumerate() {
+            if b.touch_mask & (1 << sphere.link) != 0
+                || (k < 32 && sphere.touch_boxes & (1 << k) != 0)
+            {
+                continue;
+            }
             let (d, g) = sphere_box(p, b);
             if d < best {
                 best = d;
@@ -302,7 +307,11 @@ fn spheres_lanes(
     }
     let mut best = splat(f32::INFINITY);
     let mut best_g = [splat(0.0); 3];
-    for b in &model.cuboids {
+    for (k, b) in model.cuboids.iter().enumerate() {
+        if b.touch_mask & (1 << sphere.link) != 0 || (k < 32 && sphere.touch_boxes & (1 << k) != 0)
+        {
+            continue;
+        }
         let m = &b.inv;
         let h = b.half_extents;
         for l in 0..LANES {

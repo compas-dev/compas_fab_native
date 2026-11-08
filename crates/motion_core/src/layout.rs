@@ -69,7 +69,9 @@ pub struct GpuSphere {
     pub center: [f32; 3],
     pub radius: f32,
     pub link: u32,
-    pub _pad: [u32; 3],
+    /// Bit `k` set: this sphere may touch cuboid `k`. WGSL kernels ignore it.
+    pub touch_boxes: u32,
+    pub _pad: [u32; 2],
 }
 
 #[repr(C)]
@@ -78,7 +80,8 @@ pub struct GpuCuboid {
     /// Inverse pose: world -> box coordinates.
     pub inv: [f32; 12],
     pub half_extents: [f32; 3],
-    pub _pad: f32,
+    /// Bit `i` set: link `i` may touch this box (its spheres skip it). WGSL kernels ignore it.
+    pub touch_mask: u32,
 }
 
 #[repr(C)]
@@ -139,15 +142,21 @@ impl ModelBuffers {
         let mut spheres: Vec<GpuSphere> = model
             .spheres
             .iter()
-            .map(|s| GpuSphere {
+            .enumerate()
+            .map(|(i, s)| GpuSphere {
                 center: s.center.map(|v| v as f32),
                 radius: s.radius as f32,
                 link: s.link,
-                _pad: [0; 3],
+                touch_boxes: scene.sphere_touch.get(i).copied().unwrap_or(0),
+                _pad: [0; 2],
             })
             .collect();
         spheres.sort_by_key(|s| s.link);
-        let cuboids = scene.cuboids.iter().map(cuboid_record).collect();
+        let cuboids = scene
+            .cuboids
+            .iter()
+            .map(|c| cuboid_record(c, model))
+            .collect();
         let disabled = |a: u32, b: u32| {
             model
                 .disabled_collisions
@@ -161,7 +170,8 @@ impl ModelBuffers {
                 center: s.center.map(|v| v as f32),
                 radius: s.radius as f32,
                 link: s.link,
-                _pad: [0; 3],
+                touch_boxes: 0,
+                _pad: [0; 2],
             })
             .collect();
         self_spheres.sort_by_key(|s| s.link);
@@ -200,11 +210,17 @@ impl ModelBuffers {
     }
 }
 
-fn cuboid_record(c: &Cuboid) -> GpuCuboid {
+fn cuboid_record(c: &Cuboid, model: &RobotModel) -> GpuCuboid {
+    let mut touch_mask = 0u32;
+    for (i, link) in model.links.iter().enumerate() {
+        if c.touch_links.contains(&link.name) {
+            touch_mask |= 1 << i;
+        }
+    }
     GpuCuboid {
         inv: invert_rigid(&c.frame).map(|v| v as f32),
         half_extents: c.half_extents.map(|v| v as f32),
-        _pad: 0.0,
+        touch_mask,
     }
 }
 

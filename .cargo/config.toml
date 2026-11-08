@@ -1,0 +1,3 @@
+# Python extension modules on macOS resolve Python symbols at load time.
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"]

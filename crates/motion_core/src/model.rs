@@ -122,11 +122,64 @@ pub struct Cuboid {
     /// Pose of the box in world coordinates.
     pub frame: Mat34,
     pub half_extents: [f64; 3],
+    /// Links allowed to touch this obstacle (compas_fab `RigidBodyState.touch_links`).
+    pub touch_links: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct Scene {
     pub cuboids: Vec<Cuboid>,
+    /// Per obstacle sphere (same order as `RobotModel::spheres`): bit `k` set means the sphere
+    /// may touch cuboid `k` (see `auto_touch_spheres`). Empty = no exemptions.
+    pub sphere_touch: Vec<u32>,
+}
+
+impl Scene {
+    /// Exempt obstacle spheres that overlap a box in at least `threshold` of `samples` random
+    /// configurations: the sphere model cannot tell them apart from "always touching" (e.g.
+    /// the sphere at the bottom of a shoulder above the floor the robot stands on). Other
+    /// spheres of the same link are still checked. Only the first 32 boxes are considered.
+    /// Returns (box, link, sphere index) of the exempted pairs.
+    pub fn auto_touch_spheres(
+        &mut self,
+        model: &RobotModel,
+        samples: usize,
+        threshold: f64,
+        seed: u64,
+    ) -> Vec<(String, String, usize)> {
+        let q = crate::sampling::random_configurations(model, samples, seed);
+        let n_boxes = self.cuboids.len().min(32);
+        let mut hits = vec![0usize; model.spheres.len() * n_boxes];
+        for b in 0..samples {
+            let qb: Vec<f64> = (0..model.dof()).map(|j| q[j * samples + b]).collect();
+            let frames = crate::reference::forward_kinematics(model, &qb);
+            for (i, s) in model.spheres.iter().enumerate() {
+                let c = crate::reference::transform_point(&frames[s.link as usize], s.center);
+                for (k, cuboid) in self.cuboids.iter().take(n_boxes).enumerate() {
+                    let (d, _) =
+                        crate::reference::point_box_distance(c, &cuboid.frame, cuboid.half_extents);
+                    if d < s.radius {
+                        hits[i * n_boxes + k] += 1;
+                    }
+                }
+            }
+        }
+        self.sphere_touch = vec![0; model.spheres.len()];
+        let mut added = Vec::new();
+        for (i, s) in model.spheres.iter().enumerate() {
+            for k in 0..n_boxes {
+                if hits[i * n_boxes + k] as f64 >= threshold * samples as f64 {
+                    self.sphere_touch[i] |= 1 << k;
+                    added.push((
+                        self.cuboids[k].name.clone(),
+                        model.links[s.link as usize].name.clone(),
+                        i,
+                    ));
+                }
+            }
+        }
+        added
+    }
 }
 
 /// Reference data from compas_robots: link frames for a set of configurations.
@@ -199,6 +252,8 @@ struct FixtureCuboid {
     name: String,
     frame: Vec<f64>,
     half_extents: [f64; 3],
+    #[serde(default)]
+    touch_links: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -310,10 +365,14 @@ pub fn load_scene(json: &str) -> Result<Scene, String> {
                 name: c.name,
                 frame: orthonormalized(mat34(&c.frame)?),
                 half_extents: c.half_extents,
+                touch_links: c.touch_links,
             })
         })
         .collect::<Result<_, String>>()?;
-    Ok(Scene { cuboids })
+    Ok(Scene {
+        cuboids,
+        sphere_touch: Vec::new(),
+    })
 }
 
 pub const IDENTITY: Mat34 = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0];

@@ -129,6 +129,25 @@ def main():
             }
             print("{:<26} {:.3f} s, {} waypoints -> {} points {}".format(name, t, len(wps.target_frames), results[name]["points"], err or ""))
 
+    try:
+        from compas_fab.backends.native import NativePlanner
+
+        cell, state = cell_with_scene(scene)
+        planner = NativePlanner(UR5Kinematics())
+        t = time.perf_counter()
+        planner.set_robot_cell(cell, state)
+        setup = time.perf_counter() - t
+        state.robot_configuration = start
+        for name, options in [
+            ("native", {}),
+            ("native_12_axis_samples", {"free_axis_samples": 12}),
+        ]:
+            t, traj, err = timed(lambda: planner.plan_cartesian_motion(waypoints, state, cell.main_group_name, options), args.repeats)
+            results[name] = {"seconds": t, "setup_seconds": setup, "points": len(traj.points) if traj else 0, "error": err}
+            print("{:<26} {:.4f} s, {} points (one-off setup {:.2f} s) {}".format(name, t, results[name]["points"], setup, err or ""))
+    except ImportError as e:
+        print("native backend not available:", e)
+
     out = {
         "machine": platform.platform(),
         "waypoints": [frame_to_3x4(f) for f in frames],
