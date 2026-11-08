@@ -173,3 +173,14 @@ def test_esdf_obstacles_keep_holes_open():
     trajectory = esdf.plan_cartesian_motion(waypoints, state, options={"free_axis_samples": 12})
     assert len(trajectory.points) == len(frames)
     assert all(c is None for c in esdf.client.core.exact_check([p.joint_values for p in trajectory.points]))
+
+
+def test_cartesian_from_the_start_state_returns_one_point_per_waypoint(ur5):
+    planner, cell, state = ur5
+    frames = [Frame([0.45, -0.3 + 0.6 * i / 49, 0.4], [1, 0, 0], [0, -1, 0]) for i in range(50)]
+    waypoints = FrameWaypoints(frames, TargetMode.ROBOT)
+    start = state.copy()
+    start.robot_configuration = cell.zero_configuration().merged(planner.plan_cartesian_motion(waypoints, state.copy()).points[0])
+    trajectory = planner.plan_cartesian_motion(waypoints, start, options={"start_from_state": True})
+    assert len(trajectory.points) == len(frames)
+    assert trajectory.start_configuration.close_to(start.robot_configuration)

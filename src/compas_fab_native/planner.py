@@ -53,7 +53,7 @@ def _native():
     try:
         import compas_fab_native
     except ImportError as e:
-        raise ImportError("The native backend needs the compas_fab_native extension (native/crates/motion_py, built with cargo).") from e
+        raise ImportError("The native backend needs the compas_fab_native extension (`pip install ./native` or `maturin develop -m native/pyproject.toml`).") from e
     return compas_fab_native
 
 
@@ -315,11 +315,15 @@ class NativePlanner(
             raise error
         joint_names = client.core.joint_names
         joint_types = robot_cell.get_configurable_joint_types(group)
+        start_values = path[0]
+        if start is not None:
+            # The core returns the start configuration followed by one per waypoint.
+            path = path[1:]
         trajectory = JointTrajectory()
         trajectory.joint_names = joint_names
         trajectory.points = [JointTrajectoryPoint(q, joint_types, joint_names=joint_names) for q in path]
         trajectory.fraction = 1.0
-        trajectory.start_configuration = robot_cell.zero_full_configuration().merged(self._configuration(path[0]))
+        trajectory.start_configuration = robot_cell.zero_full_configuration().merged(self._configuration(start_values))
         trajectory.start_state = start_state
         trajectory.attributes["native_stats"] = stats
         return trajectory
