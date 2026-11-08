@@ -27,6 +27,8 @@ pub struct Link {
     pub axis: [f64; 3],
     /// Index of the joint value in a configuration, -1 if not driven by one.
     pub q_index: i32,
+    /// Name of the joint connecting this link to its parent ("" if unnamed).
+    pub joint_name: String,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -57,6 +59,60 @@ pub struct RobotModel {
 impl RobotModel {
     pub fn dof(&self) -> usize {
         self.joint_names.len()
+    }
+
+    /// Hold the joints that no configuration drives (outside the planning group, e.g.
+    /// grippers or mimic joints) at `values` (by joint name; missing ones at zero) instead of
+    /// zero. Each value is baked into its joint's origin, starting from `rest` (the links as
+    /// loaded), so this can be called again with new values.
+    pub fn set_passive_joints(
+        &mut self,
+        rest: &[Link],
+        values: &std::collections::HashMap<String, f64>,
+    ) {
+        for (link, r) in self.links.iter_mut().zip(rest) {
+            if r.q_index >= 0 || r.joint_type == JointType::Fixed {
+                continue;
+            }
+            let value = values.get(&r.joint_name).copied().unwrap_or(0.0);
+            let [x, y, z] = r.axis;
+            let motion: Mat34 = match r.joint_type {
+                JointType::Prismatic => [
+                    1.0,
+                    0.0,
+                    0.0,
+                    x * value,
+                    0.0,
+                    1.0,
+                    0.0,
+                    y * value,
+                    0.0,
+                    0.0,
+                    1.0,
+                    z * value,
+                ],
+                _ => {
+                    let (s, c) = value.sin_cos();
+                    let t = 1.0 - c;
+                    [
+                        t * x * x + c,
+                        t * x * y - s * z,
+                        t * x * z + s * y,
+                        0.0,
+                        t * x * y + s * z,
+                        t * y * y + c,
+                        t * y * z - s * x,
+                        0.0,
+                        t * x * z - s * y,
+                        t * y * z + s * x,
+                        t * z * z + c,
+                        0.0,
+                    ]
+                }
+            };
+            link.origin = crate::reference::mul(&r.origin, &motion);
+            link.joint_type = JointType::Fixed;
+        }
     }
 
     /// Disable self-collision checks between link pairs whose spheres overlap in at least
@@ -199,6 +255,8 @@ pub struct ReferenceFk {
 
 #[derive(Deserialize)]
 struct FixtureJoint {
+    #[serde(default)]
+    name: String,
     #[serde(rename = "type")]
     kind: String,
     origin: Vec<f64>,
@@ -292,6 +350,7 @@ pub fn load_robot(json: &str) -> Result<(RobotModel, ReferenceFk), String> {
                 origin: IDENTITY,
                 axis: [1.0, 0.0, 0.0],
                 q_index: -1,
+                joint_name: String::new(),
             },
             Some(j) => {
                 let joint_type = match j.kind.as_str() {
@@ -311,6 +370,7 @@ pub fn load_robot(json: &str) -> Result<(RobotModel, ReferenceFk), String> {
                     } else {
                         j.q_index
                     },
+                    joint_name: j.name,
                 }
             }
         };

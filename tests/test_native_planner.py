@@ -291,3 +291,23 @@ def test_plan_motion_reports_colliding_start_and_goal(ur5_wall):
     start.robot_configuration = free
     with pytest.raises(MPTargetInCollisionError):
         planner.plan_motion(ConfigurationTarget(into_wall), start)
+
+
+def test_joints_outside_the_group_follow_the_state():
+    """The Panda's fingers (one configurable joint outside the arm group, one mimic) take
+    their values from the state instead of zero."""
+    cell, state = RobotCellLibrary.panda()
+    planner = NativePlanner()
+    planner.set_robot_cell(cell, state)
+    core = planner.client.core
+    names = core.link_names
+    for opening in [0.0, 0.04]:
+        state = state.copy()
+        config = state.robot_configuration
+        config.joint_values = [0.3, -0.2, 0.1, -1.8, 0.2, 1.6, 0.4, opening]
+        planner.set_robot_cell_state(state)
+        frames = core.link_frames(config.joint_values[:7])
+        for link in ["panda_leftfinger", "panda_rightfinger"]:
+            expected = cell.robot_model.forward_kinematics(config, link)
+            got = frames[names.index(link)]
+            assert abs(got[3] - expected.point.x) < 1e-9 and abs(got[7] - expected.point.y) < 1e-9 and abs(got[11] - expected.point.z) < 1e-9, (link, opening)

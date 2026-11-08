@@ -271,6 +271,12 @@ impl ExactChecker {
         configs.par_iter().map(|q| self.check(q)).collect()
     }
 
+    /// Replace the link transforms (same links, e.g. after `RobotModel::set_passive_joints`).
+    pub fn set_links(&mut self, links: Vec<motion_core::model::Link>) {
+        assert_eq!(links.len(), self.model.links.len());
+        self.model.links = links;
+    }
+
     pub fn model(&self) -> &RobotModel {
         &self.model
     }

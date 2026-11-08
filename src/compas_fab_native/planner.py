@@ -169,6 +169,26 @@ class NativePlanner(
             if self.exact:
                 client.core.set_exact_obstacles(json.dumps(exact_obstacle_meshes(client.robot_cell, robot_cell_state)))
             client._scene_key = scene_key
+        client.core.set_passive_joints(self._passive_values(robot_cell_state))
+
+    def _passive_values(self, robot_cell_state) -> dict:
+        """Values of the joints outside the planning group (e.g. gripper fingers), from the
+        state's configuration; mimic joints follow their leader."""
+        client: NativeClient = self.client
+        model = client.robot_cell.robot_model
+        group_joints = set(client.core.joint_names)
+        config = robot_cell_state.robot_configuration
+        known = dict(zip(config.joint_names, config.joint_values)) if config and config.joint_names else {}
+        values = {}
+        for joint in model.joints:
+            if joint.name in group_joints or not joint.is_configurable() and not joint.mimic:
+                continue
+            if joint.mimic:
+                leader = known.get(joint.mimic.joint, 0.0)
+                values[joint.name] = joint.mimic.multiplier * leader + joint.mimic.offset
+            elif joint.name in known:
+                values[joint.name] = known[joint.name]
+        return values
 
     def _scene_json(self, robot_cell_state):
         boxes = obstacle_boxes(self.client.robot_cell, robot_cell_state, only_touching=self.obstacles == "esdf")

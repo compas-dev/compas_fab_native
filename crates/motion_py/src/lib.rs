@@ -77,6 +77,9 @@ struct NativeCore {
     esdf: Option<(std::sync::Arc<motion_core::esdf::VoxelEsdf>, f32)>,
     /// Yes/no checker for free-space planning, rebuilt when the scene changes.
     checker: Option<Checker>,
+    /// Links as loaded, before passive joint values are baked in.
+    rest_links: Vec<motion_core::model::Link>,
+    passive: HashMap<String, f64>,
 }
 
 /// Configurations along a joint-space path, no joint moving more than `step` between two.
@@ -153,7 +156,10 @@ impl NativeCore {
             exact: None,
             esdf: None,
             checker: None,
+            rest_links: Vec::new(),
+            passive: HashMap::new(),
         };
+        core.rest_links = core.model.links.clone();
         core.load_scene(scene_json)?;
         Ok(core)
     }
@@ -313,6 +319,22 @@ impl NativeCore {
             check_dof(&self.model, c)?;
         }
         Ok(py.detach(|| check_configs(&self.buffers, &configs)))
+    }
+
+    /// Values (by joint name) of joints outside the planning group, e.g. gripper fingers;
+    /// missing ones are held at zero. Returns True if anything changed.
+    fn set_passive_joints(&mut self, values: HashMap<String, f64>) -> bool {
+        if values == self.passive {
+            return false;
+        }
+        self.model.set_passive_joints(&self.rest_links, &values);
+        self.passive = values;
+        self.buffers = ModelBuffers::new(&self.model, &self.scene);
+        self.checker = None;
+        if let Some(exact) = &mut self.exact {
+            exact.set_links(self.model.links.clone());
+        }
+        true
     }
 
     /// Suggested motion-check resolution (checks per unit of joint-space distance): at least
