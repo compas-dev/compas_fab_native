@@ -243,7 +243,9 @@ struct Fixture {
 #[derive(Deserialize)]
 struct FixtureIk {
     family: String,
+    #[serde(default)]
     params: Vec<f64>,
+    #[serde(default)]
     flange_frame: Vec<f64>,
 }
 
@@ -338,6 +340,19 @@ pub fn load_robot(json: &str) -> Result<(RobotModel, ReferenceFk), String> {
                 .map_err(|_| "offset_wrist needs 6 params")?,
             mat34(&ik.flange_frame)?,
         )),
+        Some(ik) if ik.family == "spherical_wrist" => Some(crate::ik::AnalyticIk::SphericalWrist(
+            Box::new(crate::ik::SphericalWrist::from_model(&RobotModel {
+                name: f.name.clone(),
+                joint_names: f.joint_names.clone(),
+                joint_limits: f.joint_limits.clone(),
+                links: links.clone(),
+                spheres: Vec::new(),
+                self_spheres: Vec::new(),
+                end_effector_link: f.end_effector_link.unwrap_or(links.len() - 1),
+                disabled_collisions: Vec::new(),
+                analytic_ik: None,
+            })?),
+        )),
         Some(ik) => return Err(format!("unsupported IK family {}", ik.family)),
     };
     let end_effector_link = f.end_effector_link.unwrap_or(links.len() - 1);
@@ -352,6 +367,13 @@ pub fn load_robot(json: &str) -> Result<(RobotModel, ReferenceFk), String> {
         disabled_collisions: f.disabled_collisions,
         analytic_ik,
     };
+    let mut model = model;
+    if model.analytic_ik.is_none() {
+        // No solver given: use the closed form derived from the model when the arm qualifies.
+        if let Ok(sw) = crate::ik::SphericalWrist::from_model(&model) {
+            model.analytic_ik = Some(crate::ik::AnalyticIk::SphericalWrist(Box::new(sw)));
+        }
+    }
     Ok((model, reference))
 }
 

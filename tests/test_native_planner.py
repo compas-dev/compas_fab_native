@@ -123,3 +123,27 @@ def test_exact_final_pass_and_exact_check(ur5):
     folded.robot_configuration.joint_values = [0.0, -1.57, 2.9, 0.0, 0.0, 0.0]
     with pytest.raises(CollisionCheckError):
         planner.check_collision(folded, {"exact": True})
+
+
+@pytest.mark.parametrize("factory", ["abb_irb4600_40_255", "staubli_tx2_60l"])
+def test_spherical_wrist_robots_without_a_solver(factory):
+    """The closed form for spherical-wrist arms is derived from the robot model."""
+    cell, state = getattr(RobotCellLibrary, factory)()
+    planner = NativePlanner()
+    planner.set_robot_cell(cell, state)
+    # IK round trip from random configurations.
+    check = state.copy()
+    for _ in range(20):
+        check.robot_configuration = cell.random_configuration(cell.main_group_name)
+        frame = planner.forward_kinematics(check, TargetMode.ROBOT)
+        solutions = list(planner.iter_inverse_kinematics(FrameTarget(frame, TargetMode.ROBOT), check, options={"check_collision": False}))
+        assert solutions
+        for config in solutions:
+            check.robot_configuration = config
+            assert frames_close(planner.forward_kinematics(check, TargetMode.ROBOT), frame)
+    # A Cartesian line in front of the robot, flange pointing down.
+    reach = 1.4 if factory.startswith("abb") else 0.45
+    height = 1.0 if factory.startswith("abb") else 0.5
+    frames = [Frame([reach, -0.2 + 0.4 * i / 29, height], [1, 0, 0], [0, -1, 0]) for i in range(30)]
+    trajectory = planner.plan_cartesian_motion(FrameWaypoints(frames, TargetMode.ROBOT), state, options={"free_axis_samples": 8})
+    assert len(trajectory.points) == len(frames)

@@ -279,7 +279,9 @@ pub fn plan_cartesian_with(
             Some(x) => x,
             None => {
                 stats.t_total = t0.elapsed();
-                return Err(CartesianError::NoPath { stats: Box::new(stats) });
+                return Err(CartesianError::NoPath {
+                    stats: Box::new(stats),
+                });
             }
         };
         // Reconstruct.

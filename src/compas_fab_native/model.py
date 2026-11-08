@@ -38,12 +38,16 @@ def matrix_from_3x4(values) -> np.ndarray:
 def analytic_ik_description(solver) -> Optional[dict]:
     """Closed-form IK description from a compas_fab ``AnalyticalKinematics`` solver."""
     from compas_fab.backends import OffsetWristKinematics
+    from compas_fab.backends import SphericalWristKinematics
 
     if solver is None:
-        return None
+        return None  # the core derives a spherical-wrist closed form from the model when it can
     if isinstance(solver, OffsetWristKinematics):
         flange = solver.flange_frame or Frame.worldXY()
         return {"family": "offset_wrist", "params": list(solver.params), "flange_frame": frame_to_3x4(flange)}
+    if isinstance(solver, SphericalWristKinematics):
+        # Derived from the model itself: no parameters, no joint conventions to translate.
+        return {"family": "spherical_wrist"}
     raise NotImplementedError("The native core has no closed-form IK for {}".format(type(solver).__name__))
 
 
@@ -121,14 +125,18 @@ def watertight_trimesh(tris):
     if len(tris) == 0:
         return None
     mesh = trimesh.Trimesh(tris.reshape(-1, 3), np.arange(len(tris) * 3).reshape(-1, 3), process=True)
+    if len(mesh.faces) == 0 or np.ptp(mesh.vertices, axis=0).min() < 1e-6:
+        return None  # flat or degenerate: no interior to inscribe spheres in
     if not mesh.is_watertight:
         # Components may each be watertight even if the merged mesh is not; check them.
         parts = mesh.split(only_watertight=False)
-        if not parts or not all(p.is_watertight for p in parts):
+        if not parts or not all(p.is_watertight and abs(p.volume) > 1e-12 for p in parts):
             return None
         for p in parts:
             trimesh.repair.fix_normals(p)
         return trimesh.util.concatenate(parts)
+    if abs(mesh.volume) <= 1e-12:
+        return None
     trimesh.repair.fix_normals(mesh)
     return mesh
 

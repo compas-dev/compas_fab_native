@@ -44,8 +44,14 @@ OFFSET_WRIST_SOLVERS = {
 }
 
 
+# Spherical-wrist arms: the native core derives their closed form from the model itself.
+SPHERICAL_WRIST = {"abb_irb4600_40_255", "staubli_tx2_60l"}
+
+
 def analytic_ik(robot):
     """Closed-form IK description, if compas_fab has an analytical solver for this robot."""
+    if robot in SPHERICAL_WRIST:
+        return {"family": "spherical_wrist"}
     name = OFFSET_WRIST_SOLVERS.get(robot)
     if name is None:
         return None
