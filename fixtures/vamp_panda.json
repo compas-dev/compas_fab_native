@@ -1,6 +1,7 @@
 {
  "name": "panda",
  "source": "VAMP spherized robot: panda/panda_spherized.urdf, panda/panda.srdf",
+ "attribution": "Converted from VAMP (https://github.com/KavrakiLab/vamp, Apache-2.0) spherized robot resources, based on robowflex_resources (https://github.com/KavrakiLab/robowflex_resources, MIT, Copyright (c) 2020 Kavraki Lab); Franka Emika Panda description from franka_ros (Apache-2.0). See native/NOTICE.",
  "joint_names": [
   "panda_joint1",
   "panda_joint2",

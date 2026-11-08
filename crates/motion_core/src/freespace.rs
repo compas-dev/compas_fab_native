@@ -8,6 +8,11 @@
 //!
 //! The default settings are VAMP's (`RRTCSettings`, `SimplifySettings`), so benchmarks
 //! against it compare implementations, not parameters.
+//!
+//! Attribution: the planner and the simplification follow VAMP's `planning/rrtc.hh`,
+//! `planning/simplify.hh` and `random/halton.hh` (https://github.com/KavrakiLab/vamp,
+//! Apache-2.0, Kingston, Thomason, Ramsey and contributors), rewritten in Rust and modified
+//! (see `native/NOTICE`; license in `native/licenses/Apache-2.0.txt`).
 
 use std::time::{Duration, Instant};
 

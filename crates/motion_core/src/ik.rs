@@ -3,6 +3,17 @@
 //! Solvers work in the robot model's own terms: the target is the world frame of the
 //! end-effector link (e.g. `tool0`) and the returned joint values are model joint values,
 //! wrapped into the joint limits. Every solution is checked by the model's FK in tests.
+//!
+//! `offset_wrist_ik` and `offset_wrist_fk` are a port of `ur_kin.cpp` from ROS-Industrial's
+//! `ur_kinematics` (https://github.com/ros-industrial/universal_robot), whose license
+//! requires this notice:
+//!
+//!   Copyright (c) 2013, Georgia Institute of Technology. All rights reserved.
+//!   Author: Kelsey Hawkins. Software License Agreement (BSD License): redistribution and
+//!   use in source and binary forms, with or without modification, are permitted provided
+//!   that the conditions in `native/licenses/ur_kinematics-BSD-3-Clause.txt` are met.
+//!   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
+//!   EXPRESS OR IMPLIED WARRANTIES ARE DISCLAIMED (see that file for the full text).
 
 #![allow(clippy::needless_range_loop)] // the closed form indexes several arrays in lock step
 

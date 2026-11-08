@@ -1,6 +1,9 @@
 //! MotionBenchMaker problems as shipped by VAMP (`resources/<robot>/problems.json`, written
 //! by VAMP's `problem_tar_to_pkl_json.py`), turned into obstacles with VAMP's own rules:
 //! cylinders become capsules, except in the `box` scenario, where they become boxes.
+//!
+//! The problems are MotionBenchMaker's (Chamzas et al., RA-L 2022, BSD-3-Clause, Rice
+//! University), read from a local VAMP checkout (Apache-2.0); not included. See `native/NOTICE`.
 
 use motion_core::check::Obstacles;
 use motion_core::{load_robot, RobotModel};

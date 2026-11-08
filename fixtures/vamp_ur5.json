@@ -1,6 +1,7 @@
 {
  "name": "ur5_robotiq85",
  "source": "VAMP spherized robot: ur5/ur5_spherized.urdf, ur5/ur5.srdf",
+ "attribution": "Converted from VAMP (https://github.com/KavrakiLab/vamp, Apache-2.0) spherized robot resources, based on robowflex_resources (https://github.com/KavrakiLab/robowflex_resources, MIT, Copyright (c) 2020 Kavraki Lab); UR5 description from ROS-Industrial universal_robot (BSD-3-Clause, Apache-2.0); Robotiq 2F-85 and FT300 from ROS-Industrial robotiq (BSD-2-Clause). See native/NOTICE.",
  "joint_names": [
   "shoulder_pan_joint",
   "shoulder_lift_joint",

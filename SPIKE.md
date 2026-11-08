@@ -19,6 +19,10 @@ Jump to: [Phase 0 gate](#phase-0-gate-wgpu--wgsl-or-cubecl) ·
 
 ## What is here
 
+Third-party code, data and algorithms used here (ur_kinematics, VAMP, robowflex_resources,
+Cephes, MotionBenchMaker) are credited in [`NOTICE`](NOTICE), with their licenses in
+[`licenses/`](licenses); the wheel ships both.
+
 ```
 native/
   scripts/export_robot.py       RobotCellLibrary robot -> fixture: kinematic tree, link spheres, reference FK

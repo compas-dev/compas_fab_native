@@ -1,0 +1,80 @@
+compas_fab native motion core
+Copyright (c) 2018-2026 Gramazio Kohler Research
+Licensed under the MIT License (see LICENSE, a copy of the repository's ../LICENSE).
+
+This directory contains code ported from, data derived from, and algorithms that closely
+follow the third-party works listed below. Their licenses are in `licenses/`.
+
+
+1. ur_kinematics (ROS-Industrial universal_robot)
+   https://github.com/ros-industrial/universal_robot/tree/indigo-devel/ur_kinematics
+   Copyright (c) 2013, Georgia Institute of Technology. Author: Kelsey Hawkins.
+   License: BSD-3-Clause (licenses/ur_kinematics-BSD-3-Clause.txt)
+
+   Used in: crates/motion_core/src/ik.rs (`offset_wrist_ik`, `offset_wrist_fk`): a Rust port
+   of the closed-form inverse and forward kinematics of `ur_kin.cpp`, by way of compas_fab's
+   `offset_wrist.py`.
+
+
+2. VAMP: Vector-Accelerated Motion Planning
+   https://github.com/KavrakiLab/vamp
+   Authors: Zachary Kingston, Wil Thomason, Clayton Ramsey and contributors (Kavraki Lab).
+   License: Apache-2.0 (licenses/Apache-2.0.txt)
+   W. Thomason, Z. Kingston, L. E. Kavraki, "Motions in Microseconds via Vectorized
+   Sampling-Based Planning", ICRA 2024. https://arxiv.org/abs/2309.14545
+
+   Used in:
+   - crates/motion_core/src/freespace.rs: RRT-Connect with dynamic domain and tree
+     balancing, the Halton sampler bases, and the shortcut and B-spline simplification
+     follow VAMP's `planning/rrtc.hh`, `planning/simplify.hh`, `random/halton.hh` and their
+     default settings (`rrtc_settings.hh`, `simplify_settings.hh`). Rewritten in Rust;
+     modified: f32 node storage per tree, multi-goal handling, no allocations per iteration.
+   - crates/motion_core/src/check.rs: the motion check "rake" of `planning/validate.hh`
+     (lanes spread over the motion, stepping back together), the sphere/cuboid test of
+     `collision/sphere_cuboid.hh`, link bounding spheres before link spheres, and early exit.
+     Rewritten in Rust on `wide` SIMD vectors.
+   - fixtures/vamp_panda.json, fixtures/vamp_ur5.json: kinematic trees, collision spheres
+     and disabled pairs converted from VAMP's `resources/panda/panda_spherized.urdf`,
+     `panda.srdf`, `resources/ur5/ur5_spherized.urdf` and `ur5.srdf`
+     (scripts/export_vamp_robot.py).
+   - crates/motion_bench/src/mbm.rs: VAMP's rules for turning MotionBenchMaker problems into
+     obstacles (`problem_dict_to_vamp`). The problems themselves are not included.
+
+
+3. robowflex_resources (robot descriptions used by VAMP and MotionBenchMaker)
+   https://github.com/KavrakiLab/robowflex_resources
+   Copyright (c) 2020 Kavraki Lab.
+   License: MIT (licenses/robowflex_resources-MIT.txt)
+   Z. Kingston, L. E. Kavraki, "Robowflex: Robot motion planning with MoveIt made easy",
+   IROS 2022.
+
+   The robot descriptions behind fixtures/vamp_*.json. They derive in turn from:
+   - Franka Emika Panda description, franka_ros (https://github.com/frankaemika/franka_ros),
+     Apache-2.0.
+   - Universal Robots UR5 description, ROS-Industrial universal_robot
+     (https://github.com/ros-industrial/universal_robot), BSD-3-Clause and Apache-2.0.
+   - Robotiq 2F-85 gripper and FT300 sensor descriptions, ROS-Industrial robotiq
+     (https://github.com/ros-industrial/robotiq), BSD-2-Clause.
+
+
+4. Cephes Mathematical Library
+   Stephen L. Moshier, https://www.netlib.org/cephes/
+   "Cephes Math Library Release 2.x", distributed freely; see the netlib readme.
+
+   Used in: crates/motion_core/src/check.rs (`sin_cos`): the single-precision polynomial
+   coefficients of `sinf` and `cosf` on [-pi/4, pi/4].
+
+
+5. MotionBenchMaker
+   C. Chamzas, C. Quintero-Peña, Z. Kingston, A. Orthey, D. Rakita, M. Gleicher,
+   M. Toussaint, L. E. Kavraki, "MotionBenchMaker: A Tool to Generate and Benchmark Motion
+   Planning Datasets", IEEE RA-L 2022. https://github.com/KavrakiLab/motion_bench_maker
+   Copyright (c) 2021, Rice University. License: BSD-3-Clause.
+
+   The benchmark problems used in SPIKE.md and results/mbm_m3max.md (as shipped by VAMP).
+   They are read from a local VAMP checkout and not included here.
+
+
+Rust crates and Python packages used as dependencies keep their own licenses; see
+`Cargo.lock` (`cargo metadata`) and `pyproject.toml`. Wheels built for distribution must
+bundle their license texts (to do before the first release, e.g. with cargo-about).

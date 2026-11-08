@@ -13,6 +13,10 @@
 //!
 //! Obstacles are spheres, capsules, oriented boxes and, optionally, an ESDF. Each obstacle
 //! has a mask of links allowed to touch it.
+//!
+//! Attribution: the motion "rake", the sphere/cuboid test and the bounding-sphere-first,
+//! early-exit structure follow VAMP (https://github.com/KavrakiLab/vamp, Apache-2.0); the
+//! sine/cosine polynomials are Cephes' (Stephen L. Moshier). See `native/NOTICE`.
 
 use std::mem::MaybeUninit;
 use std::sync::Arc;
