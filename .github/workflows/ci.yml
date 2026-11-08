@@ -1,0 +1,105 @@
+name: native
+
+# Rust core of the native backend (native/): lint, tests, Python extension, and CPU benchmarks
+# on every commit. Benchmark results are in the job summary and uploaded as an artifact
+# (bench-<sha>); on pull requests they are compared against the base commit on the same runner.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "native/**"
+      - "src/compas_fab/backends/native/**"
+      - "tests/backends/native/**"
+      - ".github/workflows/native.yml"
+  pull_request:
+    paths:
+      - "native/**"
+      - "src/compas_fab/backends/native/**"
+      - "tests/backends/native/**"
+      - ".github/workflows/native.yml"
+
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+      - name: Format
+        working-directory: native
+        run: cargo fmt --all --check
+      - name: Clippy
+        working-directory: native
+        run: cargo clippy --workspace --all-targets --release -- -D warnings
+      - name: Rust tests
+        working-directory: native
+        # motion_py links against Python as an extension module; it is tested through pytest.
+        run: cargo test --workspace --exclude motion_py --release
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build and install the extension
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "maturin>=1.9,<2"
+          python -m pip install -e ".[dev]"
+          maturin build --release -m native/pyproject.toml --out dist
+          python -m pip install dist/*.whl
+      - name: Python tests
+        run: python -m pytest tests/backends/native -v
+
+  bench:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+      - name: Benchmark this commit
+        working-directory: native
+        run: cargo run --release -p motion_bench --bin ci_bench -- ../bench.json
+      - name: Benchmark the base commit
+        if: github.event_name == 'pull_request'
+        run: |
+          git worktree add ../base "${{ github.event.pull_request.base.sha }}"
+          if [ -f ../base/native/crates/motion_bench/src/bin/ci_bench.rs ]; then
+            (cd ../base/native && cargo run --release -p motion_bench --bin ci_bench -- "$GITHUB_WORKSPACE/bench_base.json")
+          else
+            echo "The base commit has no ci_bench; nothing to compare against."
+          fi
+      - name: Summary
+        run: |
+          {
+            echo "## Native core benchmarks"
+            echo
+            if [ -f bench_base.json ]; then
+              python3 native/scripts/compare_bench.py bench.json bench_base.json
+            else
+              python3 native/scripts/compare_bench.py bench.json
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: bench-${{ github.sha }}
+          path: bench*.json
