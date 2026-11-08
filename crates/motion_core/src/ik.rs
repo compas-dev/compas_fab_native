@@ -4,6 +4,8 @@
 //! end-effector link (e.g. `tool0`) and the returned joint values are model joint values,
 //! wrapped into the joint limits. Every solution is checked by the model's FK in tests.
 
+#![allow(clippy::needless_range_loop)] // the closed form indexes several arrays in lock step
+
 use std::f64::consts::PI;
 
 use crate::layout::invert_rigid;
