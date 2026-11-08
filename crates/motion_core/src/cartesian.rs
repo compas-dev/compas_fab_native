@@ -81,7 +81,7 @@ pub struct CartesianResult {
 pub enum CartesianError {
     NoIk { waypoint: usize },
     NoCollisionFreeIk { waypoint: usize },
-    NoPath { stats: CartesianStats },
+    NoPath { stats: Box<CartesianStats> },
 }
 
 fn rot_z(theta: f64) -> Mat34 {
@@ -279,7 +279,7 @@ pub fn plan_cartesian_with(
             Some(x) => x,
             None => {
                 stats.t_total = t0.elapsed();
-                return Err(CartesianError::NoPath { stats });
+                return Err(CartesianError::NoPath { stats: Box::new(stats) });
             }
         };
         // Reconstruct.
