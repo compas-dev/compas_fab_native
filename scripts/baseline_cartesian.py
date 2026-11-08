@@ -20,6 +20,7 @@ import time
 
 from compas.geometry import Box
 from compas.geometry import Frame
+
 from compas_fab.backends import AnalyticalPyBulletClient
 from compas_fab.backends import AnalyticalPyBulletPlanner
 from compas_fab.backends import PyBulletClient
