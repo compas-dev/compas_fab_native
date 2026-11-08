@@ -8,7 +8,6 @@ from compas.geometry import Box
 from compas.geometry import Frame
 from compas.geometry import Torus
 from kin import Arm
-from kin import random_seeds
 from scene import compas_mesh_tris
 from scene import frame_from_matrix
 from scene import frame_rows
@@ -133,6 +132,25 @@ class Scenario:
             "vmax": self.limits()[0],
             "prismatic": [int(model[n].type) == 2 for n in names],
         }
+
+    def solve_ik(self, target, seeds=(), max_results=8, free_axis=False, check_collision=True, margin=0.0, max_seeds=64):
+        """The backend's numerical IK (``core.numeric_inverse_kinematics``) for the TCP
+        at ``target`` (4x4, robot coordinates), seeded with ``seeds`` first."""
+        self._ik_calls = getattr(self, "_ik_calls", 0) + 1
+        return [
+            np.asarray(q)
+            for q in self.core.numeric_inverse_kinematics(
+                [float(x) for x in np.asarray(target)[:3, :].ravel()],
+                tcf=[float(x) for x in self.arm.tcf[:3, :].ravel()],
+                free_axis=free_axis,
+                seeds=[[float(x) for x in q] for q in seeds],
+                max_results=max_results,
+                max_seeds=max_seeds,
+                seed=self._ik_calls,
+                check_collision=check_collision,
+                margin=margin,
+            )
+        ]
 
     def make_arm(self, tcf=None):
         j = self.joints()
@@ -273,18 +291,12 @@ class PandaMixin:
         config.joint_values = [0.03 if "finger" in n else v for n, v in zip(config.joint_names, config.joint_values)]
 
     def plan_to_frame(self, target, seeds_around=()):
-        """Numeric IK (several solutions) then RRT-Connect to whichever goal it reaches."""
+        """Numerical IK (several collision-free solutions) then RRT-Connect to whichever
+        goal it reaches."""
         t0 = time.perf_counter()
-        rng = np.random.default_rng(len(self._ik_seeds_used))
-        self._ik_seeds_used.append(1)
-        seeds = random_seeds(self.arm, 24, rng, around=[self.q, *seeds_around])
-        solutions = self.arm.ik(target, seeds, max_solutions=8, max_iterations=60)
-        if not solutions:
-            raise PlanFailed("Out of reach: no IK solution for the target.")
-        clearance = self.core.clearance([list(map(float, s)) for s in solutions])
-        goals = [list(map(float, s)) for s, c in zip(solutions, clearance) if c > 0]
+        goals = [list(map(float, q)) for q in self.solve_ik(target, [self.q, *seeds_around])]
         if not goals:
-            raise PlanFailed("Every IK solution for the target is in collision.")
+            raise PlanFailed("No collision-free IK solution for the target.")
         ik_ms = (time.perf_counter() - t0) * 1e3
         try:
             path, stats = self.core.plan_motion(list(map(float, self.q)), goals, exact=self.core.has_exact)
@@ -307,7 +319,6 @@ class PostPanda(PandaMixin, Scenario):
     camera = {"position": [0.6, -1.85, 1.1], "target": [0.3, 0.0, 0.45]}
 
     def setup(self):
-        self._ik_seeds_used = []
         self.panda_cell()
         post = Box(0.1, 0.1, 1.2).to_mesh(triangulated=True)
         self.add_body(Body("post", "Post", compas_mesh_tris(post), BRICK, Frame([0.45, 0.0, 0.6], [1, 0, 0], [0, 1, 0]), draggable=True, flat=True), rigid=post)
@@ -341,7 +352,6 @@ class ServoPanda(PandaMixin, Scenario):
     angular_speed = 0.8
 
     def setup(self):
-        self._ik_seeds_used = []
         self.panda_cell()
         floor = RigidBody.from_mesh(_floor_mesh())
         self.cell.rigid_body_models["floor"] = floor
@@ -615,7 +625,6 @@ class CubesRFL(Scenario):
     def setup(self):
         from scene import static_link_bodies
 
-        self._ik_seeds_used = []
         self.cell, self.state = RobotCellLibrary.rfl()
         rng = np.random.default_rng(7)
         cube = Box(self.side, self.side, self.side).to_mesh(triangulated=True)
@@ -643,6 +652,7 @@ class CubesRFL(Scenario):
         super().reset()
         self.picked = None
         self.touching = None
+        self._seeds_drawn = 0
 
     def limits(self, scale=1.0):
         v, _ = super().limits(scale)
@@ -676,12 +686,15 @@ class CubesRFL(Scenario):
         normals.sort(key=lambda n: -(float(n @ towards) + 0.6 * n[2]))
         return [(centre + n * self.side / 2, n) for n in normals]
 
-    def seeds(self, point, n, rng):
-        """Gantry over the point, the arm somewhere in its usual range."""
-        lo, hi = self.arm.lower, self.arm.upper
-        seeds = [self.q.copy()]
+    def seeds(self, point, n=12):
+        """Gantry over the point, the arm in its usual range: first seeds for the IK. Random
+        seeds work too, but can park robot 11's carriage against robot 12's, which the
+        sphere model under-reports (see README)."""
+        rng = np.random.default_rng(self._seeds_drawn)
+        self._seeds_drawn += 1
+        seeds = []
         for _ in range(n):
-            q = rng.uniform(lo, hi)
+            q = rng.uniform(self.arm.lower, self.arm.upper)
             q[0] = point[0] + rng.uniform(-1.2, 1.2)
             q[1] = -(point[1] + rng.uniform(-1.2, 1.2))
             q[2] = -(point[2] + rng.uniform(0.8, 2.0))
@@ -696,7 +709,7 @@ class CubesRFL(Scenario):
         for k in range(1, steps + 1):
             target = start.copy()
             target[:3, 3] = start[:3, 3] + (end - start[:3, 3]) * k / steps
-            found = self.arm.ik(target, [path[-1]], max_solutions=1, max_iterations=40)
+            found = self.solve_ik(target, [path[-1]], max_results=1, check_collision=False, max_seeds=1)
             if not found or np.max(np.abs(found[0] - path[-1])) > 0.3:
                 return None
             path.append(found[0])
@@ -777,15 +790,10 @@ class CubesRFL(Scenario):
         target = np.eye(4)
         target[:3, :3] = _frame_with_z(-normal)
         target[:3, 3] = centre + normal * self.standoff
-        rng = np.random.default_rng(len(self._ik_seeds_used))
-        self._ik_seeds_used.append(1)
-        solutions = self.arm.ik(target, self.seeds(target[:3, 3], 16, rng), max_solutions=6, max_iterations=60, free_z=True)
-        if not solutions:
-            raise PlanFailed("Out of reach: no IK solution over any face.")
-        clearance = self.core.clearance([list(map(float, q)) for q in solutions])
-        goals = [q for q, c in zip(solutions, clearance) if c > 0.01]
+        # Flange axis into the face, free about it.
+        goals = self.solve_ik(target, [start, *self.seeds(target[:3, 3])], max_results=6, free_axis=True, margin=0.01)
         if not goals:
-            raise PlanFailed("Every IK solution over the faces is in collision.")
+            raise PlanFailed("No collision-free IK solution over this face.")
         ik_ms = (time.perf_counter() - t0) * 1e3
         # The straight move in, from each goal, before committing to a free motion there.
         self.touch(guid, True)

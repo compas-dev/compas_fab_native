@@ -46,6 +46,7 @@ from compas_fab.robots import FrameWaypoints
 from compas_fab.robots import JointTrajectory
 from compas_fab.robots import JointTrajectoryPoint
 from compas_fab.robots import PointAxisTarget
+from compas_fab.robots import PointAxisWaypoints
 from compas_fab.robots import TargetMode
 
 from .model import add_attached_tools
@@ -283,22 +284,106 @@ class NativePlanner(
     # -- InverseKinematics ------------------------------------------------------------------
 
     def iter_inverse_kinematics(self, target, robot_cell_state=None, group=None, options=None):
-        """All closed-form solutions, collision-free unless ``options["check_collision"]`` is False."""
+        """IK solutions of a ``FrameTarget`` or ``PointAxisTarget``, collision-free unless
+        ``options["check_collision"]`` is False.
+
+        Robots with a closed form (``kinematics_solver``, or a spherical wrist the core
+        derives one for) get all of its solutions; for a ``PointAxisTarget``, those of
+        ``axis_samples`` rotations about the axis. Other robots (redundant arms, external
+        axes) use the core's numerical IK, which treats the rotation about a point-axis
+        target's axis as free.
+
+        Options
+        -------
+        check_collision : bool
+            Only collision-free solutions (sphere model). Default True.
+        ik : str
+            ``"auto"`` (default: closed form if there is one), ``"numeric"`` or ``"analytic"``.
+        max_results : int
+            Numerical IK: distinct solutions at most. Default 8.
+        seed : int
+            Numerical IK: offset of the random seeds. Default 0. The state's configuration
+            is always tried first.
+        axis_samples : int
+            Closed form, point-axis targets: rotations sampled about the axis. Default 16.
+        """
         options = options or {}
         client: NativeClient = self.client
         robot_cell_state = robot_cell_state or client.robot_cell_state
         self._sync_state(robot_cell_state)
-        if not isinstance(target, FrameTarget):
-            raise InverseKinematicsError("NativePlanner supports FrameTarget only.")
-        target = target.normalized_to_meters()
-        pcf = client.robot_cell.target_frames_to_pcf(robot_cell_state, target.target_frame, target.target_mode, group or client.group)
-        solutions = client.core.inverse_kinematics(self._pcf_rcf_to_3x4(pcf, robot_cell_state))
-        if options.get("check_collision", True) and solutions:
-            clearance = client.core.clearance(solutions)
-            solutions = [q for q, c in zip(solutions, clearance) if c > 0]
+        solutions = self._ik_solutions(target, robot_cell_state, group or client.group, options, bool(options.get("check_collision", True)))
         if not solutions:
             raise InverseKinematicsError("No (collision-free) IK solution for the target.")
         return (self._configuration(q) for q in solutions)
+
+    def _numeric(self, options) -> bool:
+        mode = options.get("ik", "auto")
+        if mode not in ("auto", "numeric", "analytic"):
+            raise ValueError("options['ik'] must be 'auto', 'numeric' or 'analytic'")
+        if mode == "analytic" and not self.client.core.has_analytic_ik:
+            raise InverseKinematicsError("This robot has no closed-form IK.")
+        return mode == "numeric" or (mode == "auto" and not self.client.core.has_analytic_ik)
+
+    def _reference(self, robot_cell_state, target_mode, group):
+        """Transformation from the planner frame (end-effector link) to the frame a target
+        of ``target_mode`` refers to: the tool's TCF, the workpiece's OCF, or none."""
+        robot_cell = self.client.robot_cell
+        if target_mode == TargetMode.TOOL:
+            return robot_cell.t_pcf_tcf(robot_cell_state, robot_cell_state.get_attached_tool_id(group))
+        if target_mode == TargetMode.WORKPIECE:
+            workpiece_ids = robot_cell_state.get_attached_workpiece_ids(group)
+            if len(workpiece_ids) != 1:
+                raise ValueError("Only one workpiece should be attached to the robot in group '{}'.".format(group))
+            return robot_cell.t_pcf_ocf(robot_cell_state, workpiece_ids[0])
+        if target_mode in (TargetMode.ROBOT, None):
+            return Transformation()
+        raise ValueError("Unsupported target mode: '{}'.".format(target_mode))
+
+    def _current_values(self, robot_cell_state):
+        config = robot_cell_state.robot_configuration if robot_cell_state else None
+        if not config or not config.joint_values:
+            return []
+        try:
+            return [self._group_values(config)]
+        except KeyError:
+            return []
+
+    def _ik_solutions(self, target, robot_cell_state, group, options, check_collision):
+        """Group joint values solving ``target``."""
+        client: NativeClient = self.client
+        if isinstance(target, FrameTarget):
+            target = target.normalized_to_meters()
+            frame, free = target.target_frame, False
+        elif isinstance(target, PointAxisTarget):
+            target = target.normalized_to_meters()
+            frame, free = _point_axis_frames([(target.target_point, target.target_z_axis)])[0], True
+        else:
+            raise InverseKinematicsError("NativePlanner supports FrameTarget and PointAxisTarget.")
+        t_rcf_wcf = self._t_rcf_wcf(robot_cell_state)
+        if self._numeric(options):
+            # Solve for the reference frame itself, so a free rotation is about its z axis.
+            reference = self._reference(robot_cell_state, target.target_mode, group)
+            return client.core.numeric_inverse_kinematics(
+                self._pcf_rcf_to_3x4(frame, robot_cell_state, t_rcf_wcf),
+                tcf=frame_to_3x4(reference),
+                free_axis=free,
+                seeds=self._current_values(robot_cell_state),
+                max_results=int(options.get("max_results", 8)),
+                seed=int(options.get("seed", 0)),
+                check_collision=check_collision,
+            )
+        frames = [frame]
+        if free:
+            n = int(options.get("axis_samples", 16))
+            frames = [_rotated_about_z(frame, 2 * np.pi * k / n) for k in range(n)]
+        solutions = []
+        for f in frames:
+            pcf = client.robot_cell.target_frames_to_pcf(robot_cell_state, f, target.target_mode, group)
+            solutions += client.core.inverse_kinematics(self._pcf_rcf_to_3x4(pcf, robot_cell_state, t_rcf_wcf))
+        if check_collision and solutions:
+            clearance = client.core.clearance(solutions)
+            solutions = [q for q, c in zip(solutions, clearance) if c > 0]
+        return solutions
 
     # -- CheckCollision -----------------------------------------------------------------------
 
@@ -320,16 +405,39 @@ class NativePlanner(
     # -- PlanCartesianMotion ------------------------------------------------------------------
 
     def plan_cartesian_motion(self, waypoints, start_state, group=None, options=None):
-        """Cartesian path through frame waypoints.
+        """Cartesian path through ``FrameWaypoints`` or ``PointAxisWaypoints``.
+
+        The tool moves in straight lines between waypoints: frames are interpolated every
+        ``max_step`` metres and ``max_step_angle`` radians (like MoveIt and PyBullet), and the
+        trajectory has one point per interpolated frame, passing through every waypoint.
+
+        Robots with a closed form plan over all IK branches at once (layered graph search).
+        Other robots (redundant arms, external axes) follow the path with numerical IK from
+        several starting solutions and keep the cheapest that stays collision-free.
+        Point-axis waypoints leave the rotation about the axis free: continuously with
+        numerical IK, sampled (``free_axis_samples``) with the closed form.
 
         Options
         -------
+        max_step : float
+            Largest distance between interpolated frames, metres. Default 0.01. 0 or None:
+            the waypoints only. ``max_step_distance`` is accepted as an alias.
+        max_step_angle : float
+            Largest rotation between interpolated frames, radians. Default 0.1.
         free_axis_samples : int
-            Rotations about the tool axis (TCF z) sampled per waypoint. Default 1 (frames as given).
+            Closed form: rotations about the tool axis sampled per waypoint. Default 1 for
+            frame waypoints (the frames as given), 16 for point-axis waypoints.
         free_axis_range : float
             Half-range of that rotation in radians. Default pi.
+        ik : str
+            ``"auto"`` (default: closed form if there is one), ``"numeric"`` or ``"analytic"``.
+        tracks : int
+            Numerical IK: starting solutions followed along the path. Default 8.
+        seed : int
+            Numerical IK: offset of the random seeds. Default 0.
         max_joint_step : float
-            Largest joint change between consecutive waypoints (rad). Default 0.5.
+            Largest joint change between consecutive frames (rad, or m for prismatic
+            joints). Default 0.5.
         start_from_state : bool
             Begin the path at ``start_state``'s configuration. Default False (any IK branch).
         exact_check : bool
@@ -339,34 +447,44 @@ class NativePlanner(
         client: NativeClient = self.client
         group = group or client.group
         self._sync_state(start_state)
-        if not isinstance(waypoints, FrameWaypoints):
-            raise CartesianMotionError("NativePlanner supports FrameWaypoints only.")
-        if waypoints.native_scale not in (None, 1.0):
-            waypoints = waypoints.normalized_to_meters()  # deep copy; only when scaling
+        if isinstance(waypoints, FrameWaypoints):
+            if waypoints.native_scale not in (None, 1.0):
+                waypoints = waypoints.normalized_to_meters()  # deep copy; only when scaling
+            frames, free = list(waypoints.target_frames), False
+        elif isinstance(waypoints, PointAxisWaypoints):
+            if waypoints.native_scale not in (None, 1.0):
+                waypoints = waypoints.normalized_to_meters()
+            frames, free = _point_axis_frames(waypoints.target_points_and_axes), True
+        else:
+            raise CartesianMotionError("NativePlanner supports FrameWaypoints and PointAxisWaypoints.")
+        if not frames:
+            raise CartesianMotionError("No waypoints.")
+        max_step = options.get("max_step", options.get("max_step_distance", 0.01))
+        if max_step:
+            frames = _interpolate_frames(frames, float(max_step), float(options.get("max_step_angle", 0.1)))
         robot_cell = client.robot_cell
         t_rcf_wcf = self._t_rcf_wcf(start_state)
-        tcf = None
-        frames = waypoints.target_frames
-        if waypoints.target_mode == TargetMode.TOOL:
-            # Plan TCF frames directly, so the free rotation happens about the tool axis.
-            tool_id = start_state.get_attached_tool_id(group)
-            t_pcf_tcf = robot_cell.t_pcf_tcf(start_state, tool_id)
-            tcf = frame_to_3x4(t_pcf_tcf)
-            targets = [self._pcf_rcf_to_3x4(f, start_state, t_rcf_wcf) for f in frames]
-        else:
-            pcf = robot_cell.target_frames_to_pcf(start_state, frames, waypoints.target_mode, group)
-            targets = [self._pcf_rcf_to_3x4(f, start_state, t_rcf_wcf) for f in pcf]
+        # Plan the reference frame (TCF, OCF or flange) directly, so a free rotation is
+        # about its own z axis.
+        tcf = frame_to_3x4(self._reference(start_state, waypoints.target_mode, group))
+        targets = [self._pcf_rcf_to_3x4(f, start_state, t_rcf_wcf) for f in frames]
         start = self._group_values(start_state.robot_configuration) if options.get("start_from_state") else None
+        numeric = self._numeric(options)
         try:
             path, _, stats = client.core.plan_cartesian(
                 targets,
                 tcf=tcf,
-                free_axis_samples=int(options.get("free_axis_samples", 1)),
+                free_axis_samples=int(options.get("free_axis_samples", 16 if free else 1)),
                 free_axis_range=float(options.get("free_axis_range", 3.141592653589793)),
                 start=start,
                 max_joint_step=float(options.get("max_joint_step", 0.5)),
                 edge_check_step=float(options.get("edge_check_step", 0.05)),
                 exact=bool(options.get("exact_check", True)) and client.core.has_exact,
+                free_axis=free and numeric,
+                numeric=numeric,
+                tracks=int(options.get("tracks", 8)),
+                seed=int(options.get("seed", 0)),
+                seeds=self._current_values(start_state),
             )
         except RuntimeError as e:
             error = CartesianMotionError()
@@ -450,6 +568,12 @@ class NativePlanner(
             raise ValueError("start_state.robot_configuration must be provided.")
         start = self._group_values(start_state.robot_configuration)
         goals = self._motion_goals(target, start_state, group, options)
+        if bool(options.get("exact_check", True)) and client.core.has_exact:
+            # The sphere model can miss thin contacts (a forearm grazing a wall). A goal like
+            # that makes every path to it fail the exact check, so drop it up front.
+            goals = [g for g, contact in zip(goals, client.core.exact_check(goals)) if contact is None]
+            if not goals:
+                raise MPTargetInCollisionError("Every goal configuration of the target is in collision (exact meshes).", target=target)
         try:
             path, stats = client.core.plan_motion(
                 start,
@@ -528,32 +652,15 @@ class NativePlanner(
         """Goal configurations (group joint values) of a motion target."""
         if isinstance(target, ConfigurationTarget):
             return [self._group_values(target.target_configuration)]
-        if isinstance(target, FrameTarget):
-            frame_targets = [target]
-        elif isinstance(target, PointAxisTarget):
-            target = target.normalized_to_meters()
-            z = target.target_z_axis
-            # Any x axis perpendicular to z, then rotated about z.
-            helper = [1.0, 0.0, 0.0] if abs(z[0]) < 0.9 else [0.0, 1.0, 0.0]
-            x0 = np.cross(z, helper)
-            x0 /= np.linalg.norm(x0)
-            y0 = np.cross(z, x0)
-            n = int(options.get("axis_samples", 16))
-            frame_targets = []
-            for k in range(n):
-                a = 2 * np.pi * k / n
-                x = np.cos(a) * x0 + np.sin(a) * y0
-                y = np.cross(z, x)
-                frame_targets.append(FrameTarget(Frame(target.target_point, x.tolist(), y.tolist()), target.target_mode))
-        else:
+        if not isinstance(target, (FrameTarget, PointAxisTarget)):
             raise NotImplementedError("NativePlanner.plan_motion supports ConfigurationTarget, FrameTarget and PointAxisTarget.")
-        goals = []
-        for frame_target in frame_targets:
-            try:
-                configs = self.iter_inverse_kinematics(frame_target, start_state, group, {"check_collision": False})
-                goals.extend(self._group_values(c) for c in configs)
-            except InverseKinematicsError:
-                continue
+        # Closed form: every solution, collisions are the planner's business. Numerical IK:
+        # the solve itself steers clear of collisions, so its goals are collision-free.
+        numeric = self._numeric(options)
+        try:
+            goals = self._ik_solutions(target, start_state, group, options, check_collision=numeric)
+        except InverseKinematicsError:
+            goals = []
         if not goals:
             raise MPNoIKSolutionError("No IK solution for the target.", target=target)
         return goals
@@ -566,4 +673,75 @@ def _densify(path, step):
         for k in range(1, n + 1):
             t = k / n
             out.append([x + t * (y - x) for x, y in zip(a, b)])
+    return out
+
+
+def _rotated_about_z(frame, angle):
+    """``frame`` rotated by ``angle`` about its own z axis."""
+    c, s = np.cos(angle), np.sin(angle)
+    x, y = np.array(frame.xaxis), np.array(frame.yaxis)
+    return Frame(frame.point, (c * x + s * y).tolist(), (-s * x + c * y).tolist())
+
+
+def _point_axis_frames(points_and_axes):
+    """Frames with z along each axis. The x axis is arbitrary for the first one and carried
+    over to the next (projected onto its plane), so the frames turn as little as possible."""
+    frames = []
+    x_prev = None
+    for point, axis in points_and_axes:
+        z = np.asarray(list(axis), dtype=float)
+        z /= np.linalg.norm(z)
+        x = None
+        if x_prev is not None:
+            x = x_prev - np.dot(x_prev, z) * z
+            if np.linalg.norm(x) < 1e-6:
+                x = None
+        if x is None:
+            helper = np.array([1.0, 0.0, 0.0]) if abs(z[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+            x = np.cross(z, helper)
+        x /= np.linalg.norm(x)
+        frames.append(Frame(list(point), x.tolist(), np.cross(z, x).tolist()))
+        x_prev = x
+    return frames
+
+
+def _axis_angle(r):
+    """Axis and angle of a 3x3 rotation matrix."""
+    angle = float(np.arccos(np.clip((np.trace(r) - 1.0) / 2.0, -1.0, 1.0)))
+    if angle < 1e-12:
+        return np.array([0.0, 0.0, 1.0]), 0.0
+    axis = np.array([r[2, 1] - r[1, 2], r[0, 2] - r[2, 0], r[1, 0] - r[0, 1]])
+    if np.linalg.norm(axis) < 1e-9:  # angle ~ pi: axis from the symmetric part
+        k = int(np.argmax(np.diag(r)))
+        axis = (r[:, k] + np.eye(3)[k]) / np.sqrt(2.0 * (1.0 + r[k, k]))
+    return axis / np.linalg.norm(axis), angle
+
+
+def _rotation(axis, angle):
+    x, y, z = axis
+    c, s, t = np.cos(angle), np.sin(angle), 1.0 - np.cos(angle)
+    return np.array(
+        [
+            [t * x * x + c, t * x * y - s * z, t * x * z + s * y],
+            [t * x * y + s * z, t * y * y + c, t * y * z - s * x],
+            [t * x * z - s * y, t * y * z + s * x, t * z * z + c],
+        ]
+    )
+
+
+def _interpolate_frames(frames, max_step, max_angle):
+    """Frames between consecutive ``frames`` (linear position, shortest rotation), at most
+    ``max_step`` metres and ``max_angle`` radians apart; the given frames are kept."""
+    out = [frames[0]]
+    for a, b in zip(frames, frames[1:]):
+        ra = np.array([list(a.xaxis), list(a.yaxis), list(a.zaxis)]).T
+        rb = np.array([list(b.xaxis), list(b.yaxis), list(b.zaxis)]).T
+        axis, angle = _axis_angle(ra.T @ rb)
+        pa, pb = np.array(list(a.point)), np.array(list(b.point))
+        n = max(1, int(np.ceil(np.linalg.norm(pb - pa) / max_step)), int(np.ceil(angle / max_angle)) if max_angle else 1)
+        for k in range(1, n):
+            t = k / n
+            r = ra @ _rotation(axis, t * angle)
+            out.append(Frame((pa + t * (pb - pa)).tolist(), r[:, 0].tolist(), r[:, 1].tolist()))
+        out.append(b)
     return out

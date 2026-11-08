@@ -8,7 +8,7 @@ server, which re-plans.
 | | Scenario | What to try |
 |---|---|---|
 | a | UR5 around a wall | Drag the yellow pointer (a flange frame target) or the wall. Every IK solution is a goal. |
-| b | Panda around a post | The same with seven axes. The Panda has no closed-form IK, so the demo finds solutions by damped least squares. |
+| b | Panda around a post | The same with seven axes. The Panda has no closed-form IK; the core's numerical IK finds several solutions in a few milliseconds. |
 | c | Servo a Panda | Jog the gripper with the keys or the on-screen pad. Each step is checked for collisions before it is sent. **Home** plans a way back. |
 | d | Milling a spiral | Drag or tilt the stock. Free motion to the start of a coplanar spiral, then 5 turns at a feed speed. The cone may touch the stock; the arm may not. |
 | e | Plunge through a ring | Drag or tilt the ring. The robot plunges along its axis. Switch the obstacle model to **Bounding boxes** to see why it needs the distance field. |
@@ -48,14 +48,18 @@ For front-end work, run `npm run dev` in `web/` (port 5173). It proxies `/ws` to
   and draggable bodies. Free motions use `plan_motion` (`FrameTarget`, `PointAxisTarget`,
   `ConfigurationTarget`). Cartesian paths use `plan_cartesian_motion`, and both are timed by
   the core's TOPP-RA.
-- `kin.py`: a numeric Jacobian on the core's forward kinematics, damped-least-squares IK
-  (optionally free about the tool axis) and a servo step with null-space pull to a home
-  posture. Used for the Panda and the 9-axis RFL group, which have no closed-form IK.
+- `kin.py`: a numeric Jacobian on the core's forward kinematics and a servo step with
+  null-space pull to a home posture (scenario c). IK, for the Panda and the 9-axis RFL
+  group, is the core's own numerical IK (`core.numeric_inverse_kinematics`, what
+  `NativePlanner.iter_inverse_kinematics` uses for robots without a closed form).
 - The RFL scenario plans the `robot11_eaXYZ` group. The native backend builds the core's
   tree from only the links that group can move (robot 12 rides on the same bridge, so it
   is one of them); bridge 2 with robots 21 and 22, the rails and the hall become static
   obstacles. The touch is a straight line of IK solutions from 15 cm off the face, with
-  the cube allowed to touch the flange link for that segment only.
+  the cube allowed to touch the flange link for that segment only. The IK gets seeds with
+  the gantry over the target first: the sphere model under-reports how close robot 11's
+  carriage is to robot 12's (see `native/SPIKE.md`, "big flat links"), and random seeds
+  can park it there, which costs failed plans.
 - `scene.py`: link and body meshes for the browser.
 - `web/src/main.ts`: the page. Clicks on cubes (`object_picked`) go to the server as `picked`. Meshes go into the viewer once, as COMPAS Protobuf `Mesh`
   messages in each object's own frame. Every pose after that is the viewer's own

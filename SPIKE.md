@@ -433,11 +433,59 @@ Follow-ups done since:
   post, servoing a Panda, milling a spiral, plunging through a ring, the RFL touching
   cubes) are planned while you drag targets and obstacles (or click cubes) in a
   compas_threejs_ts viewer, and streamed over a websocket at 60 Hz. Planning takes 1 to
-  110 ms, except numeric IK in Python (Panda about 120 ms) and the RFL (about 200 ms, most
-  of it scene updates for the touch).
+  135 ms; the RFL takes about 200 ms, most of it scene updates for the touch (since the
+  core's numerical IK replaced the demo's Python IK, the Panda takes 3 ms, not 120).
   ESDF note from the ring: with 2 cm voxels and a 1 cm margin the sphere search can graze a
   5 cm tube that the exact check then rejects (5 wasted attempts). The demo uses 1.5 cm
   voxels with a 1.5 cm margin. The default margin should probably scale with the voxel size.
+
+- **Numerical IK in the core** (`motion_core::numik`): for robots without a closed form
+  (the Panda, the RFL's 9-axis gantry groups). Weighted least squares solved by
+  Levenberg-Marquardt, after PyRoki's formulation (credited in `NOTICE`): TCP pose
+  (full, or free about the tool axis), a weak rest pull towards the seed that fades near
+  the target, and obstacle and self-collision residuals from the same spheres, touch
+  exemptions and ESDF as the checker, with a margin that drops to zero near the target.
+  Jacobians are written out (geometric Jacobian, sphere distance gradients). Joint limits
+  by projection. Robots with prismatic joints first get a "carry" stage that moves only
+  them, so the TCP reaches the target with the seed's arm posture (otherwise a random seed
+  on a 37 m rail leaves the arm stretching for a target metres away). Seeds: the caller's
+  first, then random ones, in parallel batches; solutions are deduplicated and accepted by
+  the sphere checker. Timings: 8 solutions in 3.4 ms (Panda) and 3.2 ms (RFL robot 11),
+  1.8 ms and 58 ms for point-axis targets. In the live demo the Panda's "post" plan went
+  from 125 ms (Python IK) to 3 ms.
+- **Cartesian paths for any robot** (`cartesian::plan_cartesian_tracked`): numerical IK
+  follows the path from up to 8 starting solutions in parallel, each waypoint solved from
+  the previous one; tracks that lose the target, jump or collide (nodes and edges, sphere
+  model) are dropped, the cheapest survivor that passes the exact check wins. Panda line:
+  4.5 ms; RFL 4 m line with the gantry: 54 ms (405 points). With a free axis the rotation
+  about the tool axis is continuous, not sampled.
+- **compas_fab API gaps closed:** `PointAxisTarget` in `iter_inverse_kinematics`,
+  `PointAxisWaypoints` in `plan_cartesian_motion` (x axis carried over between
+  waypoints), all three target modes (the free rotation is about the TCF or OCF, not the
+  flange). Cartesian waypoints are interpolated every `max_step` (0.01 m, MoveIt's option
+  name; `max_step_distance` as in PyBullet) and `max_step_angle` (0.1 rad), so the tool
+  moves in straight lines between sparse waypoints, as with the other backends. Before,
+  the native planner went through the given frames only (`max_step: 0` keeps that).
+- **Sphere fits are cached**, in memory and on disk (`~/.cache/compas_fab/native_spheres`,
+  `%LOCALAPPDATA%` on Windows, `COMPAS_FAB_NATIVE_CACHE` to move or disable it), keyed by
+  the mesh and the options. 97% of `set_robot_cell` was sphere fitting: a second
+  `set_robot_cell` for the same cell went from 1.4-3.5 s to 0.02-0.09 s, in a new process
+  too. Each body's random stream is now seeded from its own mesh, so its spheres no longer
+  depend on the order bodies are fitted in.
+- **Two robustness fixes found by the new seeds:** (1) the sphere fit can miss a thin
+  contact (a UR5 forearm grazing a wall) at a goal, and every path to that goal then fails
+  the exact check; `plan_motion` now drops goals that collide on the exact meshes before
+  planning. (2) After an exact rejection, retrying with another seed found the same path
+  again (always, when the straight motion was free); retries now plan on spheres inflated
+  by 5, 10, 20, 30 mm, falling back to the plain ones if the start or every goal then
+  collides. A test (`test_esdf_obstacles_keep_holes_open`) passed for 2 of 6 sphere seeds:
+  its 0.22 m ring left the UR5 wrist millimetres; it now uses 0.25 m.
+- **Open: big flat links.** Self-collision spheres are inscribed, and 12 of them leave
+  10-20 cm gaps at the faces of a large box like an RFL carriage, so the sphere model lets
+  robot 11's carriage slide into robot 12's; the exact check catches it, after RRT has
+  found such a path (several 0.5 s failures). The demo gives the IK seeds with the gantry
+  over the target, which avoids most of it. The fix belongs in the sphere model (more
+  spheres for large links, or boxes/capsules for self-collision).
 
 - **Multi-robot cells (found by the RFL demo):** the RFL has 44 links, more than the
   core's 32, and its spheres would exceed the 256 per robot. The description now keeps

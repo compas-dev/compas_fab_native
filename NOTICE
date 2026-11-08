@@ -88,6 +88,16 @@ follow the third-party works listed below. Their licenses are in `licenses/`.
    - crates/motion_core/src/ik.rs, spherical wrist: product of exponentials and the
      Paden-Kahan subproblems (R. M. Murray, Z. Li, S. S. Sastry, "A Mathematical
      Introduction to Robotic Manipulation", CRC Press 1994).
+   - crates/motion_core/src/numik.rs, numerical IK: Levenberg-Marquardt (K. Levenberg, "A
+     Method for the Solution of Certain Non-Linear Problems in Least Squares", Quarterly
+     of Applied Mathematics 2(2), 1944; D. W. Marquardt, "An Algorithm for Least-Squares
+     Estimation of Nonlinear Parameters", SIAM Journal on Applied Mathematics 11(2), 1963).
+     IK as one weighted least-squares problem over pose, rest-posture and collision costs
+     follows PyRoki: C. M. Kim, B. Yi, H. Choi, Y. Ma, K. Goldberg, A. Kanazawa, "PyRoki: A
+     Modular Toolkit for Robot Kinematic Optimization", IROS 2025,
+     https://arxiv.org/abs/2505.03728 (https://github.com/chungmin99/pyroki, MIT License,
+     Copyright (c) 2025 Chung Min Kim). The approach only; no PyRoki code is used (PyRoki
+     differentiates JAX code automatically, numik.rs writes the Jacobians out).
 
 
 Rust crates and Python packages used as dependencies keep their own licenses; see

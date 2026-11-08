@@ -9,6 +9,7 @@ pub mod freespace;
 pub mod ik;
 pub mod layout;
 pub mod model;
+pub mod numik;
 pub mod reference;
 pub mod sampling;
 pub mod simd;

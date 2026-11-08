@@ -358,3 +358,179 @@ pub fn plan_cartesian_with(
         }
     }
 }
+
+// ---------------------------------------------------------------------------------------
+// Robots without closed-form IK (redundant arms, external axes): follow the path
+
+/// One configuration per waypoint, any number of joints.
+#[derive(Clone, Debug)]
+pub struct TrackedResult {
+    pub path: Vec<Vec<f64>>,
+    pub cost: f64,
+    pub stats: CartesianStats,
+}
+
+/// Exact collision check for configurations of any length: true = collision.
+pub type ExactValidatorN<'a> = &'a (dyn Fn(&[Vec<f64>]) -> Vec<bool> + Sync);
+
+/// Configurations strictly between `a` and `b`, no joint moving more than `step` between two.
+fn between(a: &[f64], b: &[f64], step: f64) -> Vec<Vec<f64>> {
+    let jump = a
+        .iter()
+        .zip(b)
+        .map(|(x, y)| (x - y).abs())
+        .fold(0.0, f64::max);
+    let n = (jump / step).ceil().max(1.0) as usize;
+    (1..n)
+        .map(|k| {
+            let t = k as f64 / n as f64;
+            a.iter().zip(b).map(|(x, y)| x + t * (y - x)).collect()
+        })
+        .collect()
+}
+
+/// Cartesian path by numerical IK, for robots without a closed form.
+///
+/// Every waypoint is solved from the previous waypoint's configuration (which is also the
+/// rest posture of that solve), so the joints follow the path continuously; with
+/// `free_axis` the rotation about the tool axis is left to the solver. Without a start
+/// configuration, up to `tracks` distinct collision-free solutions of the first waypoint
+/// (solved from `seeds` first, e.g. the current configuration) start a track each, in
+/// parallel. Tracks that lose the target, jump more than
+/// `max_joint_step` or collide (nodes or interpolated edges, sphere model) are dropped;
+/// the cheapest remaining one that also passes the exact validator is returned.
+#[allow(clippy::too_many_arguments)]
+pub fn plan_cartesian_tracked(
+    model: &RobotModel,
+    scene: &crate::model::Scene,
+    buffers: &ModelBuffers,
+    req: &CartesianRequest,
+    free_axis: bool,
+    tracks: usize,
+    seeds: &[Vec<f64>],
+    ik: &crate::numik::IkSettings,
+    exact: Option<ExactValidatorN>,
+) -> Result<TrackedResult, CartesianError> {
+    use crate::numik::{IkGoal, Solver};
+    use rayon::prelude::*;
+
+    let t0 = Instant::now();
+    let mut stats = CartesianStats::default();
+    if req.waypoints.is_empty() {
+        return Err(CartesianError::NoPath {
+            stats: Box::new(stats),
+        });
+    }
+    let solver = Solver::new(model, scene);
+    let goal = |w: usize| IkGoal {
+        target: req.waypoints[w],
+        tcf: req.tcf,
+        free_axis,
+    };
+    let clear = |q: &[f64]| check_configs(buffers, &[q])[0] > req.margin;
+
+    // Track starts: the start configuration, or solutions of the first waypoint.
+    let (starts, first) = match &req.start {
+        Some(start) => (vec![start.clone()], 0),
+        None => {
+            let settings = crate::numik::IkSettings {
+                max_results: tracks.max(1),
+                ..ik.clone()
+            };
+            let solutions = solver.solve(&goal(0), seeds, &settings, &clear);
+            if solutions.is_empty() {
+                let any = crate::numik::IkSettings {
+                    max_results: 1,
+                    collision_weight: 0.0,
+                    ..ik.clone()
+                };
+                return Err(if solver.solve(&goal(0), &[], &any, &|_| true).is_empty() {
+                    CartesianError::NoIk { waypoint: 0 }
+                } else {
+                    CartesianError::NoCollisionFreeIk { waypoint: 0 }
+                });
+            }
+            (solutions, 1)
+        }
+    };
+    stats.t_ik = t0.elapsed();
+
+    // Follow each start along the waypoints.
+    let follow = |start: &Vec<f64>| -> Result<(Vec<Vec<f64>>, f64, usize), usize> {
+        let mut path = vec![start.clone()];
+        let mut cost = 0.0;
+        let tracking = crate::numik::IkSettings {
+            max_iterations: ik.max_iterations.min(60),
+            ..ik.clone()
+        };
+        for w in first..req.waypoints.len() {
+            let prev = path.last().unwrap();
+            let q = solver
+                .solve_from(prev, prev, &goal(w), &tracking)
+                .ok_or(w)?;
+            let jump = q
+                .iter()
+                .zip(prev)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0, f64::max);
+            if jump > req.max_joint_step {
+                return Err(w);
+            }
+            cost += q.iter().zip(prev).map(|(a, b)| (a - b).abs()).sum::<f64>();
+            path.push(q);
+        }
+        // Sphere checks of every node and the motion between them, in one batch.
+        let mut configs = path.clone();
+        let mut edges = 0;
+        for pair in path.windows(2) {
+            let mid = between(&pair[0], &pair[1], req.edge_check_step);
+            edges += mid.len();
+            configs.extend(mid);
+        }
+        let clearance = check_configs(buffers, &configs);
+        if let Some(bad) = clearance.iter().position(|&c| c <= req.margin) {
+            // The waypoint where it fails, for the error message.
+            return Err(if bad < path.len() {
+                bad
+            } else {
+                req.waypoints.len() - 1
+            });
+        }
+        Ok((path, cost, edges))
+    };
+    let ts = Instant::now();
+    let outcomes: Vec<_> = starts.par_iter().map(follow).collect();
+    stats.t_search = ts.elapsed();
+    stats.search_rounds = 1;
+    stats.ik_nodes = starts.len() * (req.waypoints.len() - first + 1);
+    let mut done: Vec<(Vec<Vec<f64>>, f64, usize)> = outcomes
+        .iter()
+        .filter_map(|o| o.as_ref().ok().cloned())
+        .collect();
+    stats.free_nodes = done.iter().map(|d| d.0.len()).sum();
+    stats.edge_configs_checked = done.iter().map(|d| d.2).sum();
+    done.sort_by(|a, b| a.1.total_cmp(&b.1));
+
+    for (path, cost, _) in done {
+        if let Some(exact) = exact {
+            let tx = Instant::now();
+            let mut configs = path.clone();
+            for pair in path.windows(2) {
+                configs.extend(between(&pair[0], &pair[1], req.edge_check_step));
+            }
+            let hit = exact(&configs).into_iter().any(|h| h);
+            stats.exact_configs_checked += configs.len();
+            stats.t_exact += tx.elapsed();
+            if hit {
+                stats.exact_rejections += 1;
+                continue;
+            }
+        }
+        stats.t_total = t0.elapsed();
+        return Ok(TrackedResult { path, cost, stats });
+    }
+    stats.t_total = t0.elapsed();
+    Err(CartesianError::NoPath {
+        stats: Box::new(stats),
+    })
+}

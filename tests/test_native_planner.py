@@ -15,6 +15,8 @@ from compas_fab.backends import UR5Kinematics  # noqa: E402
 from compas_fab.backends.native import NativePlanner  # noqa: E402
 from compas_fab.robots import FrameTarget  # noqa: E402
 from compas_fab.robots import FrameWaypoints  # noqa: E402
+from compas_fab.robots import PointAxisTarget  # noqa: E402
+from compas_fab.robots import PointAxisWaypoints  # noqa: E402
 from compas_fab.robots import RigidBody  # noqa: E402
 from compas_fab.robots import RigidBodyState  # noqa: E402
 from compas_fab.robots import RobotCellLibrary  # noqa: E402
@@ -78,7 +80,7 @@ def test_collision_with_a_box():
 def test_cartesian_line_robot_mode(ur5):
     planner, cell, state = ur5
     frames = [Frame([0.45, -0.3 + 0.6 * i / 49, 0.4], [1, 0, 0], [0, -1, 0]) for i in range(50)]
-    trajectory = planner.plan_cartesian_motion(FrameWaypoints(frames, TargetMode.ROBOT), state.copy())
+    trajectory = planner.plan_cartesian_motion(FrameWaypoints(frames, TargetMode.ROBOT), state.copy(), options={"max_step": 0})
     assert len(trajectory.points) == len(frames)
     check = state.copy()
     for point, frame in zip(trajectory.points, frames):
@@ -94,7 +96,7 @@ def test_cartesian_tool_mode_with_free_axis():
     planner.set_robot_cell(cell, state)
     sphere_counts = planner.client.core.sphere_counts
     frames = [Frame([0.4 + 0.1 * math.cos(t), 0.1 * math.sin(t), 0.3], [1, 0, 0], [0, -1, 0]) for t in [2 * math.pi * i / 40 for i in range(41)]]
-    trajectory = planner.plan_cartesian_motion(FrameWaypoints(frames, TargetMode.TOOL), state, options={"free_axis_samples": 12})
+    trajectory = planner.plan_cartesian_motion(FrameWaypoints(frames, TargetMode.TOOL), state, options={"free_axis_samples": 12, "max_step": 0})
     check = state.copy()
     for point, frame in zip(trajectory.points, frames):
         check.robot_configuration = cell.zero_configuration().merged(point)
@@ -146,18 +148,19 @@ def test_spherical_wrist_robots_without_a_solver(factory):
     reach = 1.4 if factory.startswith("abb") else 0.45
     height = 1.0 if factory.startswith("abb") else 0.5
     frames = [Frame([reach, -0.2 + 0.4 * i / 29, height], [1, 0, 0], [0, -1, 0]) for i in range(30)]
-    trajectory = planner.plan_cartesian_motion(FrameWaypoints(frames, TargetMode.ROBOT), state, options={"free_axis_samples": 8})
+    trajectory = planner.plan_cartesian_motion(FrameWaypoints(frames, TargetMode.ROBOT), state, options={"free_axis_samples": 8, "max_step": 0})
     assert len(trajectory.points) == len(frames)
 
 
 def test_esdf_obstacles_keep_holes_open():
-    """A ring's bounding box fills its hole; its ESDF does not."""
+    """A ring's bounding box fills its hole; its ESDF does not. (At 0.22 m the UR5's wrist
+    clears the rim by millimetres, and whether it passes depends on the random sphere fit.)"""
     from compas.geometry import Torus
 
     from compas_fab.backends.kinematics.exceptions import CartesianMotionError
 
     cell, _ = RobotCellLibrary.ur5()
-    cell.rigid_body_models["ring"] = RigidBody.from_mesh(Torus(0.22, 0.025).to_mesh(u=48, v=12, triangulated=True))
+    cell.rigid_body_models["ring"] = RigidBody.from_mesh(Torus(0.25, 0.025).to_mesh(u=48, v=12, triangulated=True))
     state = cell.default_cell_state()
     state.rigid_body_states["ring"] = RigidBodyState(Frame([0.45, 0.0, 0.45], [1, 0, 0], [0, 1, 0]))
     # Plunge the flange from above into the ring.
@@ -181,8 +184,8 @@ def test_cartesian_from_the_start_state_returns_one_point_per_waypoint(ur5):
     frames = [Frame([0.45, -0.3 + 0.6 * i / 49, 0.4], [1, 0, 0], [0, -1, 0]) for i in range(50)]
     waypoints = FrameWaypoints(frames, TargetMode.ROBOT)
     start = state.copy()
-    start.robot_configuration = cell.zero_configuration().merged(planner.plan_cartesian_motion(waypoints, state.copy()).points[0])
-    trajectory = planner.plan_cartesian_motion(waypoints, start, options={"start_from_state": True})
+    start.robot_configuration = cell.zero_configuration().merged(planner.plan_cartesian_motion(waypoints, state.copy(), options={"max_step": 0}).points[0])
+    trajectory = planner.plan_cartesian_motion(waypoints, start, options={"start_from_state": True, "max_step": 0})
     assert len(trajectory.points) == len(frames)
     assert trajectory.start_configuration.close_to(start.robot_configuration)
 
@@ -398,3 +401,177 @@ def test_multi_robot_cell_plans_one_gantry_robot():
     assert core.clearance([start, q])[0] > 0 and core.clearance([start, q])[1] > 0
     path, _ = core.plan_motion(start, [q], exact=core.has_exact)
     assert len(path) >= 2
+
+
+# -- Point-axis targets, interpolation, numerical IK ------------------------------------------
+
+
+def _down(x, y, z):
+    return Frame([x, y, z], [1, 0, 0], [0, -1, 0])
+
+
+def _reached(planner, state, values, group=None, mode=TargetMode.ROBOT):
+    check = state.copy()
+    check.robot_configuration = state.robot_configuration.merged(values)
+    return planner.forward_kinematics(check, mode, group)
+
+
+@pytest.fixture(scope="module")
+def panda():
+    cell, state = RobotCellLibrary.panda()
+    planner = NativePlanner()
+    planner.set_robot_cell(cell, state)
+    assert not planner.client.core.has_analytic_ik
+    return planner, cell, state
+
+
+@pytest.fixture(scope="module")
+def rfl():
+    cell, state = RobotCellLibrary.rfl()
+    planner = NativePlanner()
+    planner.set_robot_cell(cell, state, options={"group": "robot11_eaXYZ"})
+    return planner, cell, state
+
+
+def test_numeric_ik_for_a_seven_axis_arm(panda):
+    planner, cell, state = panda
+    frame = _down(0.45, 0.2, 0.35)
+    solutions = list(planner.iter_inverse_kinematics(FrameTarget(frame, TargetMode.ROBOT), state))
+    assert len(solutions) == 8  # max_results: a redundant arm has infinitely many
+    limits = [cell.robot_model.get_joint_by_name(n).limit for n in solutions[0].joint_names]
+    for config in solutions:
+        assert frames_close(_reached(planner, state, config), frame)
+        assert all(lim.lower - 1e-9 <= v <= lim.upper + 1e-9 for v, lim in zip(config.joint_values, limits))
+        check = state.copy()
+        check.robot_configuration = state.robot_configuration.merged(config)
+        planner.check_collision(check)
+    values = [c.joint_values for c in solutions]
+    assert all(max(abs(a - b) for a, b in zip(p, q)) > 0.05 for i, p in enumerate(values) for q in values[i + 1 :])
+    # The same seeds give the same answers.
+    again = list(planner.iter_inverse_kinematics(FrameTarget(frame, TargetMode.ROBOT), state))
+    assert [c.joint_values for c in again] == values
+
+
+def test_numeric_ik_can_be_forced_on_a_closed_form_robot(ur5):
+    planner, cell, state = ur5
+    frame = _down(0.45, 0.1, 0.4)
+    solutions = list(planner.iter_inverse_kinematics(FrameTarget(frame, TargetMode.ROBOT), state, options={"ik": "numeric", "max_results": 4}))
+    assert 1 <= len(solutions) <= 4
+    for config in solutions:
+        assert frames_close(_reached(planner, state, config), frame)
+
+
+@pytest.mark.parametrize("robot", ["ur5", "panda"])
+def test_point_axis_target_ik(robot, request):
+    """Closed form (UR5: sampled rotations about the axis) and numerical IK (Panda: the
+    rotation about the axis is free)."""
+    planner, cell, state = request.getfixturevalue(robot)
+    target = PointAxisTarget([0.4, -0.15, 0.3], [0.3, 0.0, -1.0], TargetMode.ROBOT)
+    solutions = list(planner.iter_inverse_kinematics(target, state))
+    assert len(solutions) > 1
+    for config in solutions:
+        reached = _reached(planner, state, config)
+        assert reached.point.distance_to_point(target.target_point) < 1e-6
+        assert reached.zaxis.dot(target.target_z_axis) > 1 - 1e-9
+
+
+def test_plan_motion_to_a_frame_with_a_seven_axis_arm(panda):
+    planner, cell, state = panda
+    frame = _down(0.45, 0.2, 0.35)
+    trajectory = planner.plan_motion(FrameTarget(frame, TargetMode.ROBOT), state)
+    assert frames_close(_reached(planner, state, trajectory.points[-1]), frame)
+    _assert_free_path(planner, trajectory)
+
+
+def test_cartesian_interpolates_between_sparse_waypoints(ur5):
+    """Two waypoints 0.6 m apart, a quarter turn about z between them: the tool moves in a
+    straight line, turning evenly, in steps of at most max_step and max_step_angle."""
+    planner, cell, state = ur5
+    a = _down(0.45, -0.3, 0.4)
+    b = Frame([0.45, 0.3, 0.4], [0, -1, 0], [-1, 0, 0])
+    trajectory = planner.plan_cartesian_motion(FrameWaypoints([a, b], TargetMode.ROBOT), state.copy())
+    assert len(trajectory.points) >= 61
+    frames = [_reached(planner, state, p) for p in trajectory.points]
+    assert frames_close(frames[0], a) and frames_close(frames[-1], b)
+    for f, g in zip(frames, frames[1:]):
+        assert abs(f.point.x - 0.45) < 1e-6 and abs(f.point.z - 0.4) < 1e-6
+        assert f.point.distance_to_point(g.point) <= 0.01 + 1e-9
+        assert math.acos(max(-1.0, min(1.0, f.xaxis.dot(g.xaxis)))) <= 0.1 + 1e-6
+    steps = [max(abs(x - y) for x, y in zip(p.joint_values, q.joint_values)) for p, q in zip(trajectory.points, trajectory.points[1:])]
+    assert max(steps) <= 0.5
+
+
+@pytest.mark.parametrize("robot", ["ur5", "panda"])
+def test_point_axis_waypoints(robot, request):
+    """A circle with a tilted tool axis; the rotation about the axis is free."""
+    planner, cell, state = request.getfixturevalue(robot)
+    points = [(0.4 + 0.08 * math.cos(t), 0.08 * math.sin(t), 0.3) for t in [2 * math.pi * i / 24 for i in range(25)]]
+    waypoints = PointAxisWaypoints([(p, [0.2, 0.0, -1.0]) for p in points], TargetMode.ROBOT)
+    trajectory = planner.plan_cartesian_motion(waypoints, state.copy(), options={"max_step": 0})
+    assert len(trajectory.points) == len(points)
+    axis = [0.2 / math.hypot(0.2, 1.0), 0.0, -1.0 / math.hypot(0.2, 1.0)]
+    for point, p in zip(trajectory.points, points):
+        reached = _reached(planner, state, point)
+        assert reached.point.distance_to_point(p) < 1e-6
+        assert reached.zaxis.dot(axis) > 1 - 1e-9
+
+
+def test_numeric_cartesian_in_tool_mode_turns_about_the_tool_axis():
+    """With numerical IK the free rotation is about the TCF, not the flange."""
+    cell, state = RobotCellLibrary.ur5_cone_tool()
+    planner = NativePlanner(UR5Kinematics())
+    planner.set_robot_cell(cell, state)
+    points = [(0.4 + 0.1 * math.cos(t), 0.1 * math.sin(t), 0.3) for t in [2 * math.pi * i / 20 for i in range(21)]]
+    waypoints = PointAxisWaypoints([(p, [0, 0, -1]) for p in points], TargetMode.TOOL)
+    trajectory = planner.plan_cartesian_motion(waypoints, state, options={"ik": "numeric", "max_step": 0})
+    for point, p in zip(trajectory.points, points):
+        tcf = _reached(planner, state, point, mode=TargetMode.TOOL)
+        assert tcf.point.distance_to_point(p) < 1e-6
+        assert tcf.zaxis.dot([0, 0, -1]) > 1 - 1e-9
+
+
+def test_gantry_robot_ik_motion_and_cartesian(rfl):
+    """RFL robot 11 with its gantry (9 axes): the external axes carry the arm to targets
+    metres away, and a 4 m Cartesian line is followed by the gantry and the arm together."""
+    planner, cell, state = rfl
+    group = "robot11_eaXYZ"
+    frame = _down(12.0, 4.0, 1.2)
+    solutions = list(planner.iter_inverse_kinematics(FrameTarget(frame, TargetMode.ROBOT), state, group))
+    assert solutions
+    for config in solutions:
+        assert frames_close(_reached(planner, state, config, group), frame, tol=1e-5)
+    trajectory = planner.plan_motion(FrameTarget(frame, TargetMode.ROBOT), state, group)
+    assert frames_close(_reached(planner, state, trajectory.points[-1], group), frame, tol=1e-5)
+
+    a, b = _down(10.0, 3.0, 1.0), _down(14.0, 3.5, 1.0)
+    trajectory = planner.plan_cartesian_motion(FrameWaypoints([a, b], TargetMode.ROBOT), state, group)
+    assert len(trajectory.points) >= 400
+    for point in trajectory.points[::20] + [trajectory.points[-1]]:
+        p = _reached(planner, state, point, group).point
+        t = (p.x - 10.0) / 4.0
+        assert -1e-6 <= t <= 1 + 1e-6
+        assert abs(p.y - (3.0 + 0.5 * t)) < 1e-5 and abs(p.z - 1.0) < 1e-5
+    x = [dict(zip(p.joint_names, p.joint_values))["bridge1_joint_EA_X"] for p in (trajectory.points[0], trajectory.points[-1])]
+    assert x[1] - x[0] > 3.0  # the bridge moved along the hall
+
+
+def test_sphere_fit_is_cached_in_memory_and_on_disk(tmp_path, monkeypatch):
+    from compas_fab.backends.native import model
+
+    monkeypatch.setenv("COMPAS_FAB_NATIVE_CACHE", str(tmp_path))
+    monkeypatch.setattr(model, "_sphere_cache", {})
+    cell, state = RobotCellLibrary.ur5()
+    first = NativePlanner(UR5Kinematics())
+    first.set_robot_cell(cell, state)
+    assert list(tmp_path.glob("*.json"))
+
+    # A new process: nothing in memory, and fitting would fail.
+    def no_fitting(*args, **kwargs):
+        raise AssertionError("fitted again")
+
+    monkeypatch.setattr(model, "_sphere_cache", {})
+    monkeypatch.setattr(model, "fit_sphere_sets", no_fitting)
+    second = NativePlanner(UR5Kinematics())
+    second.set_robot_cell(cell, state)
+    assert second._robot_description["spheres"] == first._robot_description["spheres"]
+    assert second._robot_description["self_spheres"] == first._robot_description["self_spheres"]

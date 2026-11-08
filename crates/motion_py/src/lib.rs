@@ -8,11 +8,13 @@ use std::collections::HashMap;
 use std::f64::consts::PI;
 
 use motion_core::cartesian::{
-    check_configs, plan_cartesian_with, CartesianError, CartesianRequest, Config,
+    check_configs, plan_cartesian_tracked, plan_cartesian_with, CartesianError, CartesianRequest,
+    CartesianStats, Config,
 };
 use motion_core::check::{Checker, Obstacles};
 use motion_core::freespace::{self, FreeSpaceError, FreeSpaceSettings};
 use motion_core::model::Mat34;
+use motion_core::numik::{IkGoal, IkSettings, Solver};
 use motion_core::reference::forward_kinematics;
 use motion_core::timing::{time_parameterize, TimingSettings};
 use motion_core::{load_robot, load_scene, ModelBuffers, RobotModel, Scene};
@@ -104,6 +106,15 @@ fn densify(path: &[Vec<f64>], step: f64) -> Vec<Vec<f64>> {
         }
     }
     out
+}
+
+/// The model with every sphere (obstacle and self) grown by `margin` metres.
+fn inflate_spheres(model: &RobotModel, margin: f64) -> RobotModel {
+    let mut m = model.clone();
+    for s in m.spheres.iter_mut().chain(m.self_spheres.iter_mut()) {
+        s.radius += margin;
+    }
+    m
 }
 
 impl NativeCore {
@@ -238,6 +249,69 @@ impl NativeCore {
             .iter()
             .map(|q| q.to_vec())
             .collect())
+    }
+
+    /// True if the robot has a closed-form IK solver (`inverse_kinematics`).
+    #[getter]
+    fn has_analytic_ik(&self) -> bool {
+        self.model.analytic_ik.is_some()
+    }
+
+    /// Numerical IK (any chain): distinct solutions for the TCF at `frame` (robot
+    /// coordinates), `tcf` relative to the end-effector link. With `free_axis`, any
+    /// rotation about the TCF z axis is a solution. `seeds` are tried first (e.g. the
+    /// current configuration), then random ones. With `check_collision`, the solve steers
+    /// clear of collisions and only configurations with clearance above `margin` are
+    /// returned.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        frame,
+        tcf = None,
+        free_axis = false,
+        seeds = Vec::new(),
+        max_results = 8,
+        max_seeds = 64,
+        seed = 0,
+        check_collision = true,
+        margin = 0.0,
+    ))]
+    fn numeric_inverse_kinematics(
+        &self,
+        py: Python<'_>,
+        frame: Vec<f64>,
+        tcf: Option<Vec<f64>>,
+        free_axis: bool,
+        seeds: Vec<Vec<f64>>,
+        max_results: usize,
+        max_seeds: usize,
+        seed: u64,
+        check_collision: bool,
+        margin: f32,
+    ) -> PyResult<Vec<Vec<f64>>> {
+        for q in &seeds {
+            check_dof(&self.model, q)?;
+        }
+        let goal = IkGoal {
+            target: mat34(&frame)?,
+            tcf: match tcf {
+                Some(t) => mat34(&t)?,
+                None => motion_core::model::IDENTITY,
+            },
+            free_axis,
+        };
+        let settings = IkSettings {
+            max_results,
+            max_seeds: max_seeds.max(seeds.len()),
+            seed,
+            collision_weight: if check_collision { 1.0 } else { 0.0 },
+            ..Default::default()
+        };
+        let buffers = &self.buffers;
+        let solver = Solver::new(&self.model, &self.scene);
+        Ok(py.detach(|| {
+            let accept = |q: &[f64]| !check_collision || check_configs(buffers, &[q])[0] > margin;
+            solver.solve(&goal, &seeds, &settings, &accept)
+        }))
     }
 
     /// Enable the exact final pass: collision meshes per link (link coordinates) and obstacle
@@ -470,7 +544,36 @@ impl NativeCore {
                     seed: seed + attempt as u64 * 100_003,
                     ..Default::default()
                 };
-                let plan = match freespace::plan(checker, &start32, &goals32, &settings) {
+                // After an exact rejection, plan on inflated spheres: the sphere model passed
+                // a path that grazes the meshes, and re-seeding alone tends to find the same
+                // path (always so when the straight motion is free). If the inflated spheres
+                // put the start or every goal in collision, fall back to the plain ones.
+                let inflated = (exact_rejections > 0).then(|| {
+                    let margin = [0.005, 0.01, 0.02, 0.03][(exact_rejections - 1).min(3)];
+                    let model = inflate_spheres(&self.model, margin);
+                    Checker::new(&model, Obstacles::from_scene(&model, &self.scene))
+                });
+                let mut result = match &inflated {
+                    Some(c) => freespace::plan(c, &start32, &goals32, &settings),
+                    None => freespace::plan(checker, &start32, &goals32, &settings),
+                };
+                if inflated.is_some()
+                    && matches!(
+                        result,
+                        Err(FreeSpaceError::StartInCollision | FreeSpaceError::AllGoalsInCollision)
+                    )
+                {
+                    result = freespace::plan(checker, &start32, &goals32, &settings);
+                }
+                stats.insert(
+                    "inflation".to_string(),
+                    if inflated.is_some() {
+                        [0.005, 0.01, 0.02, 0.03][(exact_rejections - 1).min(3)]
+                    } else {
+                        0.0
+                    },
+                );
+                let plan = match result {
                     Ok(plan) => plan,
                     Err(FreeSpaceError::StartInCollision) => {
                         return Err(PyRuntimeError::new_err("start_in_collision"))
@@ -537,7 +640,13 @@ impl NativeCore {
         })
     }
 
-    /// Plan a Cartesian path. Returns (path, cost, stats).
+    /// Plan a Cartesian path through TCF `waypoints` (robot coordinates; `tcf` relative to
+    /// the end-effector link). With the closed-form IK: layered graph search over IK
+    /// branches and `free_axis_samples` rotations about the tool axis. With numerical IK
+    /// (`numeric`, default: when there is no closed form or with `free_axis`): `tracks`
+    /// solutions of the first waypoint (from `seeds` first) are followed along the path,
+    /// the rotation about the tool axis left free with `free_axis`.
+    /// Returns (path, cost, stats).
     #[pyo3(signature = (
         waypoints,
         tcf = None,
@@ -548,6 +657,11 @@ impl NativeCore {
         edge_check_step = 0.05,
         margin = 0.0,
         exact = true,
+        free_axis = false,
+        numeric = None,
+        tracks = 8,
+        seed = 0,
+        seeds = Vec::new(),
     ))]
     #[allow(clippy::too_many_arguments)]
     fn plan_cartesian(
@@ -562,7 +676,15 @@ impl NativeCore {
         edge_check_step: f64,
         margin: f32,
         exact: bool,
+        free_axis: bool,
+        numeric: Option<bool>,
+        tracks: usize,
+        seed: u64,
+        seeds: Vec<Vec<f64>>,
     ) -> PyResult<CartesianOutput> {
+        for q in &seeds {
+            check_dof(&self.model, q)?;
+        }
         let req = CartesianRequest {
             waypoints: waypoints
                 .iter()
@@ -579,25 +701,68 @@ impl NativeCore {
             edge_check_step,
             margin,
         };
-        if self.model.analytic_ik.is_none() {
+        if let Some(start) = &req.start {
+            check_dof(&self.model, start)?;
+        }
+        // Numerical IK when asked, or when there is no closed form; also for a continuous
+        // free axis, which the closed form can only sample.
+        let numeric = numeric.unwrap_or(self.model.analytic_ik.is_none() || free_axis);
+        if !numeric && self.model.analytic_ik.is_none() {
             return Err(PyRuntimeError::new_err("no closed-form IK for this robot"));
         }
+        if !numeric && self.model.dof() != 6 {
+            return Err(PyRuntimeError::new_err(
+                "the closed-form Cartesian planner needs 6 joints",
+            ));
+        }
         let checker = if exact { self.exact.as_ref() } else { None };
-        let validator = checker.map(|c| {
-            move |configs: &[Config]| -> Vec<bool> {
-                let qs: Vec<Vec<f64>> = configs.iter().map(|q| q.to_vec()).collect();
-                c.check_many(&qs).into_iter().map(|r| r.is_some()).collect()
-            }
-        });
-        let result = py.detach(|| {
-            let v = validator
-                .as_ref()
-                .map(|f| f as &(dyn Fn(&[Config]) -> Vec<bool> + Sync));
-            plan_cartesian_with(&self.model, &self.buffers, &req, v)
-        });
+        let result: Result<(Vec<Vec<f64>>, f64, CartesianStats), CartesianError> = if numeric {
+            let ik = IkSettings {
+                seed,
+                ..Default::default()
+            };
+            let validator = checker.map(|c| {
+                move |configs: &[Vec<f64>]| -> Vec<bool> {
+                    c.check_many(configs)
+                        .into_iter()
+                        .map(|r| r.is_some())
+                        .collect()
+                }
+            });
+            py.detach(|| {
+                let v = validator
+                    .as_ref()
+                    .map(|f| f as &(dyn Fn(&[Vec<f64>]) -> Vec<bool> + Sync));
+                plan_cartesian_tracked(
+                    &self.model,
+                    &self.scene,
+                    &self.buffers,
+                    &req,
+                    free_axis,
+                    tracks,
+                    &seeds,
+                    &ik,
+                    v,
+                )
+                .map(|r| (r.path, r.cost, r.stats))
+            })
+        } else {
+            let validator = checker.map(|c| {
+                move |configs: &[Config]| -> Vec<bool> {
+                    let qs: Vec<Vec<f64>> = configs.iter().map(|q| q.to_vec()).collect();
+                    c.check_many(&qs).into_iter().map(|r| r.is_some()).collect()
+                }
+            });
+            py.detach(|| {
+                let v = validator
+                    .as_ref()
+                    .map(|f| f as &(dyn Fn(&[Config]) -> Vec<bool> + Sync));
+                plan_cartesian_with(&self.model, &self.buffers, &req, v)
+                    .map(|r| (r.path.iter().map(|q| q.to_vec()).collect(), r.cost, r.stats))
+            })
+        };
         match result {
-            Ok(r) => {
-                let s = r.stats;
+            Ok((path, cost, s)) => {
                 let stats = HashMap::from([
                     ("ik_nodes".to_string(), s.ik_nodes as f64),
                     ("free_nodes".to_string(), s.free_nodes as f64),
@@ -613,7 +778,7 @@ impl NativeCore {
                     ("seconds_exact".to_string(), s.t_exact.as_secs_f64()),
                     ("seconds_total".to_string(), s.t_total.as_secs_f64()),
                 ]);
-                Ok((r.path.iter().map(|q| q.to_vec()).collect(), r.cost, stats))
+                Ok((path, cost, stats))
             }
             Err(CartesianError::NoIk { waypoint }) => {
                 Err(PyRuntimeError::new_err(format!("no IK solution for waypoint {waypoint}")))

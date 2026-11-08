@@ -16,7 +16,10 @@ scene as oriented boxes. This module builds those descriptions from compas_fab o
 Sphere fitting needs numpy, and trimesh for the inscribed set.
 """
 
+import hashlib
+import json
 import math
+import os
 from typing import Optional
 
 import numpy as np
@@ -226,6 +229,64 @@ def fit_sphere_sets(
     return [(c, r + obstacle_padding) for c, r in inscribed], inscribed
 
 
+SPHERE_CACHE_VERSION = 1  # bump when the fitting changes, to invalidate cached spheres
+_sphere_cache = {}
+
+
+def sphere_cache_dir():
+    """Directory of the on-disk sphere cache, or None if disabled.
+
+    ``COMPAS_FAB_NATIVE_CACHE`` overrides it; set it to ``0`` (or empty) to disable.
+    Default: ``%LOCALAPPDATA%/compas_fab/native_spheres`` on Windows,
+    ``~/.cache/compas_fab/native_spheres`` elsewhere.
+    """
+    path = os.environ.get("COMPAS_FAB_NATIVE_CACHE")
+    if path is not None:
+        return None if path in ("", "0") else path
+    base = os.environ.get("LOCALAPPDATA") if os.name == "nt" else None
+    base = base or os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(base, "compas_fab", "native_spheres")
+
+
+def cached_sphere_sets(tris, seed=0, **options):
+    """``fit_sphere_sets`` for one body, cached by its triangles and the options.
+
+    The random stream is seeded from the mesh itself, so a body gets the same spheres
+    whatever else is in the cell and in whichever order bodies are fitted. Results are kept
+    in memory and, unless disabled (see ``sphere_cache_dir``), on disk, so rebuilding a
+    planner for the same cell (a Grasshopper recompute, a new session) skips the fitting.
+    """
+    tris = np.ascontiguousarray(np.round(np.asarray(tris, dtype=float), 7))
+    h = hashlib.sha256()
+    h.update(json.dumps([SPHERE_CACHE_VERSION, seed, sorted(options.items())], default=str).encode())
+    h.update(tris.tobytes())
+    key = h.hexdigest()
+    hit = _sphere_cache.get(key)
+    folder = sphere_cache_dir()
+    path = os.path.join(folder, key[:40] + ".json") if folder else None
+    if hit is None and path and os.path.exists(path):
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            hit = tuple([(np.asarray(c, dtype=float), float(r)) for c, r in spheres] for spheres in data)
+        except (OSError, ValueError, TypeError):
+            hit = None  # unreadable entry: fit again and overwrite it
+    if hit is None:
+        rng = np.random.default_rng(int(key[:15], 16))
+        hit = fit_sphere_sets(tris, rng, **options)
+        if path:
+            try:
+                os.makedirs(folder, exist_ok=True)
+                tmp = "{}.{}.tmp".format(path, os.getpid())
+                with open(tmp, "w") as f:
+                    json.dump([[[c.tolist(), r] for c, r in spheres] for spheres in hit], f)
+                os.replace(tmp, path)
+            except OSError:
+                pass  # read-only home, full disk: the in-memory cache still works
+    _sphere_cache[key] = hit
+    return hit
+
+
 # ---------------------------------------------------------------------------
 # Robot and scene descriptions
 
@@ -287,7 +348,6 @@ def planning_links(robot_cell, group=None):
 def robot_description(robot_cell, group=None, kinematics_solver=None, seed=0, sphere_options=None) -> dict:
     """The robot of ``robot_cell`` as the native core's JSON description (without tools)."""
     sphere_options = sphere_options or {}
-    rng = np.random.default_rng(seed)
     model = robot_cell.robot_model
     group = group or robot_cell.main_group_name
     joint_names = robot_cell.get_configurable_joint_names(group)
@@ -325,7 +385,7 @@ def robot_description(robot_cell, group=None, kinematics_solver=None, seed=0, sp
 
     spheres, self_spheres = [], []
     for i, tris in geometry.items():
-        covering, inscribed = fit_sphere_sets(tris, rng, **link_options)
+        covering, inscribed = cached_sphere_sets(tris, seed, **link_options)
         spheres += [{"link": i, "center": c.tolist(), "radius": r} for c, r in covering]
         self_spheres += [{"link": i, "center": c.tolist(), "radius": r} for c, r in inscribed]
 
@@ -370,7 +430,6 @@ def add_attached_tools(description, robot_cell, robot_cell_state, group, seed=0,
     Collisions between the tool and its touch links (and the end-effector link's nearest
     ancestor with geometry) are disabled, as the tool is mounted against them.
     """
-    rng = np.random.default_rng(seed + 1)
     ee = description["end_effector_link"]
     names = [link["name"] for link in description["links"]]
     for tool_id, tool_state in robot_cell_state.tool_states.items():
@@ -382,7 +441,7 @@ def add_attached_tools(description, robot_cell, robot_cell_state, group, seed=0,
             continue
         t_attach = np.array(Transformation.from_frame(tool_state.attachment_frame or Frame.worldXY()).matrix)
         tris = tris @ t_attach[:3, :3].T + t_attach[:3, 3]
-        covering, inscribed = fit_sphere_sets(tris, rng, **(sphere_options or {}))
+        covering, inscribed = cached_sphere_sets(tris, seed, **(sphere_options or {}))
         description["spheres"] += [{"link": ee, "center": c.tolist(), "radius": r} for c, r in covering]
         description["self_spheres"] += [{"link": ee, "center": c.tolist(), "radius": r} for c, r in inscribed]
         touch = set(tool_state.touch_links or [])
