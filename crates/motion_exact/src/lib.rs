@@ -83,14 +83,12 @@ fn pose(m: &Mat34) -> Pose {
 fn trimesh_body(mesh: &MeshJson) -> Result<Body, String> {
     let vertices: Vec<Vec3> = mesh
         .vertices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|v| Vec3::new(v[0] as f32, v[1] as f32, v[2] as f32))
         .collect();
-    let indices: Vec<[u32; 3]> = mesh
-        .faces
-        .chunks_exact(3)
-        .map(|f| [f[0], f[1], f[2]])
-        .collect();
+    let indices: Vec<[u32; 3]> = mesh.faces.as_chunks::<3>().0.to_vec();
     let probe = *vertices.first().ok_or("empty mesh")?;
     // Oriented meshes give a reliable inside test; fall back to a plain mesh otherwise.
     let flags = TriMeshFlags::ORIENTED | TriMeshFlags::MERGE_DUPLICATE_VERTICES;
