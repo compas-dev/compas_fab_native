@@ -35,8 +35,11 @@ pub struct Timed {
     pub velocities: Vec<Vec<f64>>,
     pub accelerations: Vec<Vec<f64>>,
     pub duration: f64,
-    /// Blend tolerance used at each interior vertex (0 = the robot stops there).
+    /// Blend tolerance used at each interior vertex (0: no blend there).
     pub blends: Vec<f64>,
+    /// Whether the robot stops at each interior vertex: a corner without a blend. Vertices
+    /// the path goes straight through need neither.
+    pub stops: Vec<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -55,9 +58,9 @@ fn norm(a: &[f64]) -> f64 {
     a.iter().map(|x| x * x).sum::<f64>().sqrt()
 }
 
-fn dot(a: &[f64], b: &[f64]) -> f64 {
-    a.iter().zip(b).map(|(x, y)| x * y).sum()
-}
+/// Turning angles below this (rad) count as straight: the path goes through the vertex
+/// without a blend or a stop (the direction jump is negligible).
+const STRAIGHT: f64 = 1e-6;
 
 /// One piece of the path, parameterized by arc length `s` in [0, length].
 #[derive(Clone, Debug)]
@@ -120,6 +123,8 @@ impl Piece {
 struct Path {
     pieces: Vec<Piece>,
     stop_before: Vec<bool>,
+    /// Per interior vertex: a stop there.
+    stops: Vec<bool>,
 }
 
 /// Lines between vertices with circular blends of at most `tolerances[i]` deviation at
@@ -137,13 +142,23 @@ fn build_path(vertices: &[Vec<f64>], tolerances: &[f64]) -> Path {
         .collect();
     // Blend length (distance from the vertex where the arc starts) per interior vertex.
     let mut blend = vec![0.0; n];
+    // Vertices the path goes straight through (no turn): neither a blend nor a stop.
+    let mut through = vec![false; n];
     let mut arcs: Vec<Option<Piece>> = vec![None; n];
     for i in 1..n - 1 {
         let (a, b) = (&dir[i - 1], &dir[i]);
-        let cos = dot(a, b).clamp(-1.0, 1.0);
-        let angle = cos.acos(); // turning angle
+        // Turning angle, accurate for small angles too (acos of the dot product is not: two
+        // equal unit vectors can give a dot product a few ulps below 1, and the bisector
+        // a - b below would then be zero).
+        let diff: Vec<f64> = (0..a.len()).map(|j| a[j] - b[j]).collect();
+        let sum: Vec<f64> = (0..a.len()).map(|j| a[j] + b[j]).collect();
+        let angle = 2.0 * norm(&diff).atan2(norm(&sum));
+        if angle < STRAIGHT {
+            through[i] = true;
+            continue;
+        }
         let tol = tolerances[i - 1];
-        if angle < 1e-9 || tol <= 0.0 || angle > std::f64::consts::PI - 1e-6 {
+        if tol <= 0.0 || angle > std::f64::consts::PI - 1e-6 {
             continue;
         }
         let half = angle / 2.0;
@@ -184,7 +199,7 @@ fn build_path(vertices: &[Vec<f64>], tolerances: &[f64]) -> Path {
             .collect();
         let length = len[i] - blend[i] - blend[i + 1];
         // A corner without a blend (or the path start) is a stop.
-        let stop = i == 0 || blend[i] == 0.0;
+        let stop = i == 0 || (blend[i] == 0.0 && !through[i]);
         if length > 1e-12 {
             pieces.push(Piece::Line {
                 start,
@@ -198,9 +213,11 @@ fn build_path(vertices: &[Vec<f64>], tolerances: &[f64]) -> Path {
             stop_before.push(false);
         }
     }
+    let stops = (1..n - 1).map(|i| blend[i] == 0.0 && !through[i]).collect();
     Path {
         pieces,
         stop_before,
+        stops,
     }
 }
 
@@ -311,6 +328,7 @@ pub fn time_parameterize(
             accelerations: vec![vec![0.0; dof]],
             duration: 0.0,
             blends: Vec::new(),
+            stops: Vec::new(),
         });
     }
 
@@ -449,6 +467,7 @@ pub fn time_parameterize(
     let mut out = Timed {
         duration,
         blends: tolerances,
+        stops: path.stops.clone(),
         ..Default::default()
     };
     let n_samples = (duration / settings.time_step).ceil() as usize;

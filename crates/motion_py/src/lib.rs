@@ -342,8 +342,9 @@ impl NativeCore {
     /// limits: straight segments with circular blends of at most `blend_tolerance` at the
     /// corners (blends that collide on the sphere model shrink, down to a stop), timed with
     /// TOPP-RA, starting and ending at rest. Returns a dict with `times`, `positions`,
-    /// `velocities`, `accelerations` (sampled every `time_step`), `duration` and `blends`
-    /// (tolerance used per interior vertex; 0 = stop).
+    /// `velocities`, `accelerations` (sampled every `time_step`), `duration`, `blends`
+    /// (tolerance used per interior vertex; 0 = no blend) and `stops` (whether the robot
+    /// stops at each interior vertex; straight-through vertices need no stop).
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (path, max_velocity, max_acceleration, blend_tolerance = 0.05, time_step = 0.01, grid_step = 0.005, resolution = None))]
     fn time_parameterize<'py>(
@@ -384,6 +385,7 @@ impl NativeCore {
         d.set_item("accelerations", timed.accelerations)?;
         d.set_item("duration", timed.duration)?;
         d.set_item("blends", timed.blends)?;
+        d.set_item("stops", timed.stops)?;
         Ok(d)
     }
 

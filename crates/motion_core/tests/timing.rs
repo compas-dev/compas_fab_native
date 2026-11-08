@@ -109,6 +109,7 @@ fn rejected_blends_become_stops() {
     let path = path6();
     let t = time_parameterize(&path, &s, |_, _| false).unwrap();
     assert!(t.blends.iter().all(|&b| b == 0.0));
+    assert!(t.stops.iter().all(|&s| s));
     for vertex in &path[1..path.len() - 1] {
         let (k, d) = t
             .positions
@@ -132,4 +133,32 @@ fn rejected_blends_become_stops() {
     // Blending saves time.
     let blended = time_parameterize(&path, &s, free).unwrap();
     assert!(blended.duration < t.duration);
+}
+
+/// Collinear interior vertices (path simplification leaves midpoints like these) are passed
+/// straight through: no stop, and no degenerate blend (the turning angle of two equal unit
+/// directions used to come out a few 1e-8 rad, giving a NaN arc).
+#[test]
+fn collinear_vertices_are_passed_through() {
+    let a = [-1.32124, -0.68326, 0.44585, -0.56866, 1.03846, 0.33684];
+    let b = [-2.539, -2.71, 1.114, -3.095, 1.573, -1.492];
+    let mid: Vec<f64> = a.iter().zip(&b).map(|(x, y)| 0.5 * (x + y)).collect();
+    let third: Vec<f64> = a.iter().zip(&b).map(|(x, y)| x + (y - x) / 3.0).collect();
+    let straight = vec![a.to_vec(), b.to_vec()];
+    let split = vec![a.to_vec(), third, mid, b.to_vec()];
+    for blend in [0.05, 0.0] {
+        let s = settings(6, 1.0, 2.0, blend);
+        for blend_free in [true, false] {
+            let one = time_parameterize(&straight, &s, |_, _| blend_free).unwrap();
+            let many = time_parameterize(&split, &s, |_, _| blend_free).unwrap();
+            assert!(
+                (one.duration - many.duration).abs() < 1e-3,
+                "{} vs {}",
+                one.duration,
+                many.duration
+            );
+            assert!(many.positions.iter().flatten().all(|x| x.is_finite()));
+            assert!(many.stops.iter().all(|&s| !s));
+        }
+    }
 }

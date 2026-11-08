@@ -449,7 +449,7 @@ class NativePlanner(
         if options.get("time_parameterization", True):
             timed = self._time_parameterize(path, group, options)
             stats["duration"] = timed["duration"]
-            stats["blends_stopped"] = float(sum(1 for b in timed["blends"] if b == 0.0))
+            stats["blends_stopped"] = float(sum(timed["stops"]))
             trajectory.points = [
                 JointTrajectoryPoint(q, joint_types, velocities=v, accelerations=a, time_from_start=Duration(t, 0), joint_names=joint_names)
                 for t, q, v, a in list(zip(timed["times"], timed["positions"], timed["velocities"], timed["accelerations"]))[1:]
