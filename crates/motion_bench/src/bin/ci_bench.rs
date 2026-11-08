@@ -10,7 +10,9 @@
 use std::time::{Duration, Instant};
 
 use motion_core::cartesian::{plan_cartesian_with, CartesianRequest, Config};
+use motion_core::check::{Checker, Obstacles, LANES};
 use motion_core::cpu::collision_min_lanes;
+use motion_core::freespace::{plan, FreeSpaceSettings};
 use motion_core::reference::forward_kinematics;
 use motion_core::sampling::random_configurations;
 use motion_core::{load_robot, load_scene, ModelBuffers, RobotModel};
@@ -47,6 +49,20 @@ fn robot(name: &str) -> RobotModel {
     // As NativePlanner does by default.
     model.disable_always_colliding(1000, 0.95, 7);
     model
+}
+
+/// A shelf in front of the robot: two sides, three boards and a back.
+fn shelf_obstacles() -> Obstacles {
+    let mut obs = Obstacles::default();
+    let at = |x: f64, y: f64, z: f64| [1.0, 0.0, 0.0, x, 0.0, 1.0, 0.0, y, 0.0, 0.0, 1.0, z];
+    for y in [-0.4, 0.4] {
+        obs.add_box(&at(0.6, y, 0.5), [0.15, 0.01, 0.5]);
+    }
+    for z in [0.2, 0.5, 0.8] {
+        obs.add_box(&at(0.6, 0.0, z), [0.15, 0.4, 0.01]);
+    }
+    obs.add_box(&at(0.76, 0.0, 0.5), [0.01, 0.4, 0.5]);
+    obs
 }
 
 fn main() {
@@ -161,6 +177,54 @@ fn main() {
                 std::hint::black_box(plan_cartesian_with(&ur5, &buffers, &req, validator).ok());
             });
         }
+
+        // ---- Free-space planning: Panda (VAMP's spheres) in front of a shelf ------------
+        let panda = robot("vamp_panda");
+        let shelf = shelf_obstacles();
+        let yes_no = Checker::new(&panda, shelf);
+        let n = 4096;
+        let q = random_configurations(&panda, n, 21);
+        let blocks: Vec<Vec<[f32; LANES]>> = (0..n / LANES)
+            .map(|k| {
+                (0..panda.dof())
+                    .map(|j| std::array::from_fn(|l| q[j * n + k * LANES + l] as f32))
+                    .collect()
+            })
+            .collect();
+        bench.time(
+            "yes/no collision check, panda + shelf (per config)",
+            "ns",
+            1e9 / n as f64,
+            budget,
+            || {
+                for b in &blocks {
+                    std::hint::black_box(yes_no.collides_lanes(b));
+                }
+            },
+        );
+        // 40 start/goal pairs of free configurations, the same on every run.
+        let free: Vec<Vec<f32>> = (0..n)
+            .map(|b| {
+                (0..panda.dof())
+                    .map(|j| q[j * n + b] as f32)
+                    .collect::<Vec<f32>>()
+            })
+            .filter(|c| !yes_no.collides(c))
+            .take(80)
+            .collect();
+        let settings = FreeSpaceSettings::default();
+        bench.time(
+            "free-space plan + simplify, panda + shelf (per problem)",
+            "us",
+            1e6 / 40.0,
+            budget,
+            || {
+                for pair in free.as_chunks::<2>().0 {
+                    let r = plan(&yes_no, &pair[0], std::slice::from_ref(&pair[1]), &settings);
+                    std::hint::black_box(r.ok());
+                }
+            },
+        );
 
         // ---- Exact mesh check, per configuration -------------------------------------
         let n = 64;

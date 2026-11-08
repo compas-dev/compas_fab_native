@@ -1,4 +1,4 @@
-# Native motion core: spike (Phase 0 and first Phase 1 pieces)
+# Native motion core: spike (Phase 0, Phase 1 pieces, start of Phase 2)
 
 Spike for the PRD "compas_fab native motion core (planning + perception)".
 
@@ -8,9 +8,13 @@ Spike for the PRD "compas_fab native motion core (planning + perception)".
 * **Phase 1, first pieces (CPU):** closed-form IK, self-collision, the layered-graph
   Cartesian planner, Python bindings and a `NativePlanner` compas_fab backend, benchmarked
   against compas_fab's existing Cartesian planners.
+* **Phase 2, start:** a SIMD yes/no collision checker and free-space planning
+  (RRT-Connect), benchmarked against VAMP on its own problems, and
+  `NativePlanner.plan_motion` for any serial robot.
 
 Jump to: [Phase 0 gate](#phase-0-gate-wgpu--wgsl-or-cubecl) ·
 [Phase 1 progress](#phase-1-progress-cpu-core-cartesian-planning-compas_fab-backend) ·
+[Free-space vs VAMP](#phase-2-start-free-space-planning-benchmarked-against-vamp) ·
 [Open issues](#open-issues-and-next-steps)
 
 ## What is here
@@ -21,11 +25,15 @@ native/
   scripts/baseline_python.py    compas_robots FK and PyBullet check_collision on the same robot + scene
   fixtures/ur5.json             UR5: 12 links, 6 dof, 32 spheres, 50 reference configurations
   fixtures/scene_boxes.json     4 cuboids (table, column, rotated beam, wall)
-  crates/motion_core            layouts (layout.rs), f64 reference, CPU f32 kernels (scalar + 8-lane), sampling
+  crates/motion_core            layouts (layout.rs), f64 reference, CPU f32 kernels (scalar + 8-lane), sampling,
+                                yes/no checker (check.rs), free-space planner (freespace.rs)
   crates/motion_gpu             wgpu host code + query.wgsl (fused full, fused min-only, split)
   crates/motion_bench           oracle checks + timing (motion_bench), sphere vs mesh verdicts (compare_verdicts),
                                 Cartesian planner on the baseline's waypoints (cartesian_bench),
-                                single-threaded CPU benchmarks run by CI on every commit (ci_bench)
+                                single-threaded CPU benchmarks run by CI on every commit (ci_bench),
+                                VAMP comparison (mbm_bench, vamp_parity, check_micro)
+  fixtures/vamp_*.json          VAMP's spherized Panda and UR5 (scripts/export_vamp_robot.py)
+  scripts/vamp_*.py             parity, path checks and planning on VAMP's side (run in a VAMP venv)
   crates/motion_py              PyO3 extension `compas_fab_native` (NativeCore)
   pyproject.toml                maturin build of the extension: `pip install ./native` (abi3 wheel, Python >= 3.9)
   scripts/baseline_cartesian.py compas_fab's Cartesian planners vs NativePlanner on the same path
@@ -60,6 +68,18 @@ cd .. && python -m pytest tests/backends/native
 python native/scripts/baseline_cartesian.py native/fixtures/scene_boxes.json native/results/baseline_cartesian.json
 for f in docs/backends/native/files/*.py; do python $f; done   # the examples
 ```
+
+VAMP comparison (VAMP 0.6.4 built from source in its own venv, `<vamp>` its checkout;
+after `python <vamp>/resources/problem_tar_to_pkl_json.py --robot panda`):
+
+```bash
+cargo run --release -p motion_bench --bin mbm_bench -- fixtures/vamp_panda.json <vamp>/resources/panda/problems.json --range 1.0 --out paths.json
+python <vamp>/scripts/evaluate_mbm.py --robot panda                       # VAMP's own numbers
+cargo run --release -p motion_bench --bin vamp_parity -- fixtures/vamp_panda.json <vamp>/resources/panda/problems.json parity.json
+python scripts/vamp_parity.py panda <vamp>/resources/panda/problems.json parity.json
+python scripts/vamp_check_paths.py panda <vamp>/resources/panda/problems.json paths.json
+```
+
 
 ## Results (Apple M3 Max, 14 CPU threads, Metal via wgpu 30)
 
@@ -314,6 +334,73 @@ compas_robots (with a moved robot base), IK round trips, collisions with a box, 
 paths in robot and tool mode (UR5 with the cone tool, free axis), and the exact pass. The rest of the compas_fab
 suite is unaffected (195 passed, 22 skipped).
 
+## Phase 2 start: free-space planning, benchmarked against VAMP
+
+`motion_core::check` is a yes/no collision checker for planners and
+`motion_core::freespace` a free-space planner on top of it:
+
+- **Checker:** 8 configurations at once in explicit SIMD (`wide::f32x8`). It tests one
+  bounding sphere per link before the link's spheres, and computes kinematics and
+  environment checks link by link, stopping at the first contact. Fixed joints are folded
+  into the next moving joint, links rigidly attached to the base are checked once when
+  the checker is built, and touch links and per-sphere box exemptions are honoured.
+  Obstacles are spheres, capsules, oriented boxes and the ESDF.
+- **Planner:** the straight motion first, then RRT-Connect (balanced, dynamic domain) and
+  shortcut + B-spline simplification, with VAMP's default settings and a Halton sampler.
+  Motions are checked with VAMP's "rake": the lanes start evenly spread over the motion
+  and step back together.
+- **compas_fab:** `NativePlanner.plan_motion` takes `ConfigurationTarget`, `FrameTarget`
+  (every IK solution is a goal) and `PointAxisTarget` (IK of rotations about the axis).
+  It works for any serial robot (7-axis Panda tested) and checks the path on the exact
+  meshes, re-planning with another seed if it touches.
+
+### Same problems, same robot model as VAMP
+
+VAMP 0.6.4 was built from source on the same machine, and its MotionBenchMaker problems
+(7 scenarios x 100) were run through both planners.
+
+- **Same robot:** `fixtures/vamp_{panda,ur5}.json` are VAMP's spherized URDFs and SRDFs
+  (`scripts/export_vamp_robot.py`). Sphere positions match VAMP's `fk` to 3e-7 m.
+- **Same verdicts:** on 21,084 configurations (both robots) our checker and
+  `vamp.<robot>.validate` give 0 different verdicts (`scripts/vamp_parity.py`). One pair
+  needed the always-colliding rule: the UR5's `wrist_2_link` and `fts_robotside` overlap
+  in every configuration, the SRDF does not disable them, and VAMP does not check them.
+- **Same algorithm:** iteration counts match VAMP's exactly (Panda: mean 471.5, median
+  104, max 42,794), and so do path lengths before and after simplification.
+- **Same path quality:** checked by VAMP itself (`scripts/vamp_check_paths.py`), 2 of our
+  699 Panda paths have a segment VAMP's own check rejects (VAMP: 2), and 41 touch an
+  obstacle when checked at 256 points per radian (VAMP: 42). Discrete checking misses
+  thin contacts by design; our exact-mesh pass is what catches them in compas_fab.
+
+Single thread, Apple M3 Max, all problems solved by both (`results/mbm_m3max.md`):
+
+| | Panda: native | Panda: VAMP | UR5: native | UR5: VAMP |
+|---|---:|---:|---:|---:|
+| planning, median | 100 µs | 69 µs | 114 µs | 75 µs |
+| simplification, median | 250 µs | 191 µs | 357 µs | 247 µs |
+| total, median | 367 µs | 268 µs | 511 µs | 341 µs |
+| total, 95th percentile | 1.18 ms | 0.81 ms | 1.95 ms | 1.16 ms |
+
+**Within 1.35x (Panda) to 1.5x (UR5) of VAMP, from a robot description at run time.**
+VAMP generates C++ per robot with every constant folded in. Closing the rest would take
+the same kind of specialization (generated code per robot, or kernels specialized on the
+sparsity of the joint origins). For compas_fab, planning time is already well below the
+exact-mesh check of the result (about 1-2 ms per path), so that check is the next target.
+
+What the checker went through on the way (findings for every SIMD kernel here):
+
+1. The "LLVM auto-vectorizes the lane loops" assumption did not hold: the first version
+   compiled to scalar code (361 `fmadd`, 0 vector FMAs). **This also applies to the older
+   distance kernel in `cpu.rs`**: 1.4 µs per configuration for the UR5, against 78 ns
+   for the yes/no checker on the Panda. Explicit SIMD fixed it.
+2. `wide`'s `splat` builds an array in memory, which LLVM lowered to `memset_pattern16`
+   calls inside the kinematics on macOS (16 calls per check). Broadcasting through the
+   architecture intrinsics (`vdupq_n_f32`, `_mm256_set1_ps`) halved the kinematics time.
+3. 8 lanes (two NEON registers) beat 4 lanes (one) on Apple Silicon end to end.
+
+CI (`native.yml`) now also tracks the yes/no check and free-space planning on a
+synthetic shelf scene, since the MotionBenchMaker problems are VAMP's data.
+
 ## Open issues and next steps
 
 - The exact pass covers Cartesian planning; IK uses the sphere model plus
@@ -323,12 +410,16 @@ suite is unaffected (195 passed, 22 skipped).
 - **compas_fab bug:** `AnalyticalPyBulletPlanner.plan_cartesian_motion` /
   `AnalyticalKinematicsPlanner.plan_cartesian_motion` with frame waypoints always raise
   `BackendTargetNotSupportedError`, and the tests that would catch it are commented out.
-  Fixed with regression tests on the local branch `fix/analytical-cartesian-frame-targets`
-  (off `main`, not pushed).
-- External axes, 7-DoF redundancy sampling.
+  Fixed with regression tests on the branch `fix/analytical-cartesian-frame-targets`.
+- External axes, 7-DoF redundancy sampling for frame targets and Cartesian paths.
 - Attached workpieces are ignored by the backend; tools are supported.
-- Explicit SIMD on the CPU (finding 4); the self-collision pair loop is now the largest
-  CPU cost (1,984 pairs for the UR5).
+- Rewrite the distance kernel in `cpu.rs` (clearance, Cartesian node checks) on explicit
+  SIMD, as the yes/no checker: it was never vectorized.
+- Free-space: time parameterization (velocity, acceleration and jerk limits),
+  joints outside the planning group are held at zero (e.g. the Panda's fingers), the
+  exact-mesh check dominates `plan_motion` (about 1-2 ms), FCIT* or AORRTC for better paths.
+- `fixtures/vamp_*.json` are derived from VAMP's resources (Apache-2.0, from
+  robowflex_resources): the attribution question of the PRD applies to them.
 - Packaging: `native/pyproject.toml` builds an abi3 wheel with maturin (`compas_fab_native`,
   a separate distribution from the same repository, as pydantic does with pydantic-core).
   Not yet: wheels for all platforms in the release workflow, and `compas_fab[native]`.

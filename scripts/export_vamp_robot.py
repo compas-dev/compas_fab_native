@@ -42,7 +42,7 @@ def main(urdf_path, srdf_path, out_path):
     urdf = ET.parse(urdf_path).getroot()
     srdf = ET.parse(srdf_path).getroot()
     joints = {j.find("child").get("link"): j for j in urdf.findall("joint")}
-    link_elements = {l.get("name"): l for l in urdf.findall("link")}
+    link_elements = {link.get("name"): link for link in urdf.findall("link")}
     roots = [name for name in link_elements if name not in joints]
     assert len(roots) == 1, roots
 
