@@ -117,7 +117,11 @@ def fit_covering_spheres(points, target_radius, max_spheres, rng):
 
 
 def watertight_trimesh(tris):
-    """One trimesh from triangles; None if trimesh is missing or the mesh is not watertight."""
+    """One closed, outward-oriented trimesh from triangles.
+
+    None if trimesh is missing, or the mesh (or one of its components) is not closed or has
+    no volume once its normals are fixed.
+    """
     try:
         import trimesh
     except ImportError:
@@ -127,18 +131,18 @@ def watertight_trimesh(tris):
     mesh = trimesh.Trimesh(tris.reshape(-1, 3), np.arange(len(tris) * 3).reshape(-1, 3), process=True)
     if len(mesh.faces) == 0 or np.ptp(mesh.vertices, axis=0).min() < 1e-6:
         return None  # flat or degenerate: no interior to inscribe spheres in
-    if not mesh.is_watertight:
-        # Components may each be watertight even if the merged mesh is not; check them.
-        parts = mesh.split(only_watertight=False)
-        if not parts or not all(p.is_watertight and abs(p.volume) > 1e-12 for p in parts):
-            return None
+    parts = [mesh] if mesh.is_watertight else mesh.split(only_watertight=False)
+    # Collision meshes often carry stray slivers (a couple of zero-area or zero-volume faces):
+    # drop components with fewer than 4 faces, keep the rest only if they are closed solids.
+    parts = [p for p in parts if len(p.faces) >= 4]
+    if not parts or not all(p.is_watertight for p in parts):
+        return None
+    with np.errstate(invalid="ignore", divide="ignore"):
         for p in parts:
             trimesh.repair.fix_normals(p)
-        return trimesh.util.concatenate(parts)
-    if abs(mesh.volume) <= 1e-12:
-        return None
-    trimesh.repair.fix_normals(mesh)
-    return mesh
+            if not np.isfinite(p.volume) or p.volume <= 1e-12:
+                return None
+    return parts[0] if len(parts) == 1 else trimesh.util.concatenate(parts)
 
 
 def fit_inscribed_spheres(mesh, tolerance, max_spheres, radii, rng):

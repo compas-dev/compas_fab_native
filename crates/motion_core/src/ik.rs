@@ -14,6 +14,7 @@ use crate::reference::mul;
 
 /// Description of a closed-form solver, as exported with the robot fixture.
 #[derive(Clone, Debug)]
+#[allow(clippy::large_enum_variant)] // one solver per robot, never in bulk
 pub enum AnalyticIk {
     /// Offset-wrist 6R arms (Universal Robots). Port of ROS `ur_kinematics/ur_kin.cpp`, via
     /// compas_fab's `offset_wrist.py`. `params` = [d1, a2, a3, d4, d5, d6].
