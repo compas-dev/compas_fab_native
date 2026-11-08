@@ -1,0 +1,835 @@
+{
+  "checks": [
+    {
+      "backend": "cpu_lanes",
+      "max_dist_err_m": 0.0,
+      "max_grad_err": 0.0,
+      "verdicts_differing": 0
+    },
+    {
+      "backend": "cpu_lanes_min",
+      "max_dist_err_m": 0.0,
+      "max_grad_err": 0.0,
+      "verdicts_differing": 0
+    },
+    {
+      "backend": "gpu_fused_full",
+      "max_dist_err_m": 2.980232238769531e-7,
+      "max_grad_err": 0.00001043081283569336,
+      "verdicts_differing": 0
+    },
+    {
+      "backend": "gpu_split",
+      "max_dist_err_m": 2.980232238769531e-7,
+      "max_grad_err": 0.00001043081283569336,
+      "verdicts_differing": 0
+    },
+    {
+      "backend": "gpu_fused_min",
+      "max_dist_err_m": 1.7881393432617188e-7,
+      "max_grad_err": 0.0,
+      "verdicts_differing": 0
+    },
+    {
+      "backend": "cubecl_fused_full",
+      "max_dist_err_m": 2.980232238769531e-7,
+      "max_grad_err": 0.00001043081283569336,
+      "verdicts_differing": 0
+    },
+    {
+      "backend": "cubecl_fused_min",
+      "max_dist_err_m": 1.7881393432617188e-7,
+      "max_grad_err": 0.0,
+      "verdicts_differing": 0
+    },
+    {
+      "backend": "cubecl_min_specialized",
+      "max_dist_err_m": 1.7881393432617188e-7,
+      "max_grad_err": 0.0,
+      "verdicts_differing": 0
+    }
+  ],
+  "cpu_threads": 14,
+  "cuboids": 4,
+  "dof": 6,
+  "gpu": "Apple M3 Max (Metal)",
+  "links": 12,
+  "results": [
+    {
+      "backend": "cpu_f64_reference_1t",
+      "batch": 1,
+      "configs_per_second": 856898.029134533,
+      "seconds": 1.167e-6
+    },
+    {
+      "backend": "cpu_scalar_14t",
+      "batch": 1,
+      "configs_per_second": 1262626.2626262626,
+      "seconds": 7.92e-7
+    },
+    {
+      "backend": "cpu_scalar_1t",
+      "batch": 1,
+      "configs_per_second": 1262626.2626262626,
+      "seconds": 7.92e-7
+    },
+    {
+      "backend": "gpu_fused_full_throughput",
+      "batch": 1,
+      "configs_per_second": 21024.746126190526,
+      "seconds": 0.000047563
+    },
+    {
+      "backend": "gpu_fused_min_throughput",
+      "batch": 1,
+      "configs_per_second": 23149.755770076627,
+      "seconds": 0.000043197
+    },
+    {
+      "backend": "gpu_split_throughput",
+      "batch": 1,
+      "configs_per_second": 29806.259314456034,
+      "seconds": 0.00003355
+    },
+    {
+      "backend": "gpu_fused_min_latency",
+      "batch": 1,
+      "configs_per_second": 5018.820577164367,
+      "seconds": 0.00019925
+    },
+    {
+      "backend": "gpu_fused_min_round_trip",
+      "batch": 1,
+      "configs_per_second": 4534.283719200877,
+      "seconds": 0.000220542
+    },
+    {
+      "backend": "cubecl_full_throughput",
+      "batch": 1,
+      "configs_per_second": 26120.57256295058,
+      "seconds": 0.000038284
+    },
+    {
+      "backend": "cubecl_min_throughput",
+      "batch": 1,
+      "configs_per_second": 30306.703842890045,
+      "seconds": 0.000032996
+    },
+    {
+      "backend": "cubecl_min_specialized_throughput",
+      "batch": 1,
+      "configs_per_second": 29381.519024533565,
+      "seconds": 0.000034035
+    },
+    {
+      "backend": "cubecl_min_latency",
+      "batch": 1,
+      "configs_per_second": 4645.760743321719,
+      "seconds": 0.00021525
+    },
+    {
+      "backend": "cubecl_min_round_trip",
+      "batch": 1,
+      "configs_per_second": 4369.197160021846,
+      "seconds": 0.000228875
+    },
+    {
+      "backend": "cpu_f64_reference_1t",
+      "batch": 8,
+      "configs_per_second": 845755.3652605984,
+      "seconds": 9.459e-6
+    },
+    {
+      "backend": "cpu_scalar_14t",
+      "batch": 8,
+      "configs_per_second": 1271455.8169103623,
+      "seconds": 6.292e-6
+    },
+    {
+      "backend": "cpu_scalar_1t",
+      "batch": 8,
+      "configs_per_second": 1263024.9447426586,
+      "seconds": 6.334e-6
+    },
+    {
+      "backend": "cpu_lanes_14t",
+      "batch": 8,
+      "configs_per_second": 1777777.7777777778,
+      "seconds": 4.5e-6
+    },
+    {
+      "backend": "cpu_lanes_1t",
+      "batch": 8,
+      "configs_per_second": 1761338.6173491855,
+      "seconds": 4.542e-6
+    },
+    {
+      "backend": "cpu_lanes_min_14t",
+      "batch": 8,
+      "configs_per_second": 1794526.693584567,
+      "seconds": 4.458e-6
+    },
+    {
+      "backend": "cpu_lanes_min_1t",
+      "batch": 8,
+      "configs_per_second": 1811184.061580258,
+      "seconds": 4.417e-6
+    },
+    {
+      "backend": "gpu_fused_full_throughput",
+      "batch": 8,
+      "configs_per_second": 165789.3646122601,
+      "seconds": 0.000048254
+    },
+    {
+      "backend": "gpu_fused_min_throughput",
+      "batch": 8,
+      "configs_per_second": 183739.09049150208,
+      "seconds": 0.00004354
+    },
+    {
+      "backend": "gpu_split_throughput",
+      "batch": 8,
+      "configs_per_second": 226289.1409498487,
+      "seconds": 0.000035353
+    },
+    {
+      "backend": "gpu_fused_min_latency",
+      "batch": 8,
+      "configs_per_second": 40058.485388667454,
+      "seconds": 0.000199708
+    },
+    {
+      "backend": "gpu_fused_min_round_trip",
+      "batch": 8,
+      "configs_per_second": 35934.86805165637,
+      "seconds": 0.000222625
+    },
+    {
+      "backend": "cubecl_full_throughput",
+      "batch": 8,
+      "configs_per_second": 206766.43146985088,
+      "seconds": 0.000038691
+    },
+    {
+      "backend": "cubecl_min_throughput",
+      "batch": 8,
+      "configs_per_second": 240233.0260352542,
+      "seconds": 0.000033301
+    },
+    {
+      "backend": "cubecl_min_specialized_throughput",
+      "batch": 8,
+      "configs_per_second": 234267.474889455,
+      "seconds": 0.000034149
+    },
+    {
+      "backend": "cubecl_min_latency",
+      "batch": 8,
+      "configs_per_second": 36852.26388063552,
+      "seconds": 0.000217083
+    },
+    {
+      "backend": "cubecl_min_round_trip",
+      "batch": 8,
+      "configs_per_second": 35489.93860240622,
+      "seconds": 0.000225416
+    },
+    {
+      "backend": "cpu_f64_reference_1t",
+      "batch": 64,
+      "configs_per_second": 786878.796075442,
+      "seconds": 0.000081334
+    },
+    {
+      "backend": "cpu_scalar_14t",
+      "batch": 64,
+      "configs_per_second": 1164525.637759744,
+      "seconds": 0.000054958
+    },
+    {
+      "backend": "cpu_scalar_1t",
+      "batch": 64,
+      "configs_per_second": 1156633.4736956246,
+      "seconds": 0.000055333
+    },
+    {
+      "backend": "cpu_lanes_14t",
+      "batch": 64,
+      "configs_per_second": 1721957.6506040306,
+      "seconds": 0.000037167
+    },
+    {
+      "backend": "cpu_lanes_1t",
+      "batch": 64,
+      "configs_per_second": 1731695.4380648304,
+      "seconds": 0.000036958
+    },
+    {
+      "backend": "cpu_lanes_min_14t",
+      "batch": 64,
+      "configs_per_second": 1781935.6275754538,
+      "seconds": 0.000035916
+    },
+    {
+      "backend": "cpu_lanes_min_1t",
+      "batch": 64,
+      "configs_per_second": 1796491.2280701755,
+      "seconds": 0.000035625
+    },
+    {
+      "backend": "gpu_fused_full_throughput",
+      "batch": 64,
+      "configs_per_second": 1265047.1427724299,
+      "seconds": 0.000050591
+    },
+    {
+      "backend": "gpu_fused_min_throughput",
+      "batch": 64,
+      "configs_per_second": 1520623.455616803,
+      "seconds": 0.000042088
+    },
+    {
+      "backend": "gpu_split_throughput",
+      "batch": 64,
+      "configs_per_second": 1678204.3213761274,
+      "seconds": 0.000038136
+    },
+    {
+      "backend": "gpu_fused_min_latency",
+      "batch": 64,
+      "configs_per_second": 318869.60724232596,
+      "seconds": 0.000200709
+    },
+    {
+      "backend": "gpu_fused_min_round_trip",
+      "batch": 64,
+      "configs_per_second": 289865.5748396681,
+      "seconds": 0.000220792
+    },
+    {
+      "backend": "cubecl_full_throughput",
+      "batch": 64,
+      "configs_per_second": 1608808.2250320506,
+      "seconds": 0.000039781
+    },
+    {
+      "backend": "cubecl_min_throughput",
+      "batch": 64,
+      "configs_per_second": 1874414.2455482662,
+      "seconds": 0.000034144
+    },
+    {
+      "backend": "cubecl_min_specialized_throughput",
+      "batch": 64,
+      "configs_per_second": 1861114.3422124,
+      "seconds": 0.000034388
+    },
+    {
+      "backend": "cubecl_min_latency",
+      "batch": 64,
+      "configs_per_second": 295556.0378865896,
+      "seconds": 0.000216541
+    },
+    {
+      "backend": "cubecl_min_round_trip",
+      "batch": 64,
+      "configs_per_second": 277958.7404994571,
+      "seconds": 0.00023025
+    },
+    {
+      "backend": "cpu_f64_reference_1t",
+      "batch": 512,
+      "configs_per_second": 786886.0521373485,
+      "seconds": 0.000650666
+    },
+    {
+      "backend": "cpu_scalar_14t",
+      "batch": 512,
+      "configs_per_second": 2028727.092620109,
+      "seconds": 0.000252375
+    },
+    {
+      "backend": "cpu_scalar_1t",
+      "batch": 512,
+      "configs_per_second": 1169729.5914171091,
+      "seconds": 0.000437708
+    },
+    {
+      "backend": "cpu_lanes_14t",
+      "batch": 512,
+      "configs_per_second": 2772573.1861847877,
+      "seconds": 0.000184666
+    },
+    {
+      "backend": "cpu_lanes_1t",
+      "batch": 512,
+      "configs_per_second": 1715001.5743178513,
+      "seconds": 0.000298542
+    },
+    {
+      "backend": "cpu_lanes_min_14t",
+      "batch": 512,
+      "configs_per_second": 2835261.3479674165,
+      "seconds": 0.000180583
+    },
+    {
+      "backend": "cpu_lanes_min_1t",
+      "batch": 512,
+      "configs_per_second": 1738539.8981324278,
+      "seconds": 0.0002945
+    },
+    {
+      "backend": "gpu_fused_full_throughput",
+      "batch": 512,
+      "configs_per_second": 10063288.651283462,
+      "seconds": 0.000050878
+    },
+    {
+      "backend": "gpu_fused_min_throughput",
+      "batch": 512,
+      "configs_per_second": 11549219.52539926,
+      "seconds": 0.000044332
+    },
+    {
+      "backend": "gpu_split_throughput",
+      "batch": 512,
+      "configs_per_second": 13026663.952778343,
+      "seconds": 0.000039304
+    },
+    {
+      "backend": "gpu_fused_min_latency",
+      "batch": 512,
+      "configs_per_second": 2545149.055262543,
+      "seconds": 0.000201167
+    },
+    {
+      "backend": "gpu_fused_min_round_trip",
+      "batch": 512,
+      "configs_per_second": 2292540.7351354253,
+      "seconds": 0.000223333
+    },
+    {
+      "backend": "cubecl_full_throughput",
+      "batch": 512,
+      "configs_per_second": 12569043.819810973,
+      "seconds": 0.000040735
+    },
+    {
+      "backend": "cubecl_min_throughput",
+      "batch": 512,
+      "configs_per_second": 14950214.617338745,
+      "seconds": 0.000034247
+    },
+    {
+      "backend": "cubecl_min_specialized_throughput",
+      "batch": 512,
+      "configs_per_second": 14457150.9247494,
+      "seconds": 0.000035415
+    },
+    {
+      "backend": "cubecl_min_latency",
+      "batch": 512,
+      "configs_per_second": 2321563.7908597495,
+      "seconds": 0.000220541
+    },
+    {
+      "backend": "cubecl_min_round_trip",
+      "batch": 512,
+      "configs_per_second": 2229722.3734349483,
+      "seconds": 0.000229625
+    },
+    {
+      "backend": "cpu_f64_reference_1t",
+      "batch": 4096,
+      "configs_per_second": 782787.2424026064,
+      "seconds": 0.005232584
+    },
+    {
+      "backend": "cpu_scalar_14t",
+      "batch": 4096,
+      "configs_per_second": 7160313.403561276,
+      "seconds": 0.000572042
+    },
+    {
+      "backend": "cpu_scalar_1t",
+      "batch": 4096,
+      "configs_per_second": 1119227.8202437053,
+      "seconds": 0.003659666
+    },
+    {
+      "backend": "cpu_lanes_14t",
+      "batch": 4096,
+      "configs_per_second": 7923258.9044779185,
+      "seconds": 0.000516959
+    },
+    {
+      "backend": "cpu_lanes_1t",
+      "batch": 4096,
+      "configs_per_second": 1259693.7369602015,
+      "seconds": 0.003251584
+    },
+    {
+      "backend": "cpu_lanes_min_14t",
+      "batch": 4096,
+      "configs_per_second": 8175648.70259481,
+      "seconds": 0.000501
+    },
+    {
+      "backend": "cpu_lanes_min_1t",
+      "batch": 4096,
+      "configs_per_second": 1265401.6151788877,
+      "seconds": 0.003236917
+    },
+    {
+      "backend": "gpu_fused_full_throughput",
+      "batch": 4096,
+      "configs_per_second": 74602943.31924814,
+      "seconds": 0.000054904
+    },
+    {
+      "backend": "gpu_fused_min_throughput",
+      "batch": 4096,
+      "configs_per_second": 88520055.32503457,
+      "seconds": 0.000046272
+    },
+    {
+      "backend": "gpu_split_throughput",
+      "batch": 4096,
+      "configs_per_second": 77275728.70483917,
+      "seconds": 0.000053005
+    },
+    {
+      "backend": "gpu_fused_min_latency",
+      "batch": 4096,
+      "configs_per_second": 20193952.660563122,
+      "seconds": 0.000202833
+    },
+    {
+      "backend": "gpu_fused_min_round_trip",
+      "batch": 4096,
+      "configs_per_second": 17510484.488087654,
+      "seconds": 0.000233917
+    },
+    {
+      "backend": "cubecl_full_throughput",
+      "batch": 4096,
+      "configs_per_second": 91618762.1625249,
+      "seconds": 0.000044707
+    },
+    {
+      "backend": "cubecl_min_throughput",
+      "batch": 4096,
+      "configs_per_second": 110443012.37630437,
+      "seconds": 0.000037087
+    },
+    {
+      "backend": "cubecl_min_specialized_throughput",
+      "batch": 4096,
+      "configs_per_second": 108148069.9160374,
+      "seconds": 0.000037874
+    },
+    {
+      "backend": "cubecl_min_latency",
+      "batch": 4096,
+      "configs_per_second": 18464340.292021476,
+      "seconds": 0.000221833
+    },
+    {
+      "backend": "cubecl_min_round_trip",
+      "batch": 4096,
+      "configs_per_second": 16769703.172978505,
+      "seconds": 0.00024425
+    },
+    {
+      "backend": "cpu_scalar_14t",
+      "batch": 32768,
+      "configs_per_second": 11007671.575798845,
+      "seconds": 0.002976833
+    },
+    {
+      "backend": "cpu_scalar_1t",
+      "batch": 32768,
+      "configs_per_second": 1112235.9360348932,
+      "seconds": 0.029461375
+    },
+    {
+      "backend": "cpu_lanes_14t",
+      "batch": 32768,
+      "configs_per_second": 11522813.186813187,
+      "seconds": 0.00284375
+    },
+    {
+      "backend": "cpu_lanes_1t",
+      "batch": 32768,
+      "configs_per_second": 1155859.8404244625,
+      "seconds": 0.028349458
+    },
+    {
+      "backend": "cpu_lanes_min_14t",
+      "batch": 32768,
+      "configs_per_second": 12045398.152828194,
+      "seconds": 0.002720375
+    },
+    {
+      "backend": "cpu_lanes_min_1t",
+      "batch": 32768,
+      "configs_per_second": 1195666.9479349586,
+      "seconds": 0.027405625
+    },
+    {
+      "backend": "gpu_fused_full_throughput",
+      "batch": 32768,
+      "configs_per_second": 95358102.15027165,
+      "seconds": 0.000343631
+    },
+    {
+      "backend": "gpu_fused_min_throughput",
+      "batch": 32768,
+      "configs_per_second": 137002567.125739,
+      "seconds": 0.000239178
+    },
+    {
+      "backend": "gpu_split_throughput",
+      "batch": 32768,
+      "configs_per_second": 73163271.00195368,
+      "seconds": 0.000447875
+    },
+    {
+      "backend": "gpu_fused_min_latency",
+      "batch": 32768,
+      "configs_per_second": 77161634.88097733,
+      "seconds": 0.000424667
+    },
+    {
+      "backend": "gpu_fused_min_round_trip",
+      "batch": 32768,
+      "configs_per_second": 60827015.748791546,
+      "seconds": 0.000538708
+    },
+    {
+      "backend": "cubecl_full_throughput",
+      "batch": 32768,
+      "configs_per_second": 93125831.2776382,
+      "seconds": 0.000351868
+    },
+    {
+      "backend": "cubecl_min_throughput",
+      "batch": 32768,
+      "configs_per_second": 131117628.93486933,
+      "seconds": 0.000249913
+    },
+    {
+      "backend": "cubecl_min_specialized_throughput",
+      "batch": 32768,
+      "configs_per_second": 126734143.72846219,
+      "seconds": 0.000258557
+    },
+    {
+      "backend": "cubecl_min_latency",
+      "batch": 32768,
+      "configs_per_second": 72302342.412314,
+      "seconds": 0.000453208
+    },
+    {
+      "backend": "cubecl_min_round_trip",
+      "batch": 32768,
+      "configs_per_second": 53194805.1948052,
+      "seconds": 0.000616
+    },
+    {
+      "backend": "cpu_scalar_14t",
+      "batch": 131072,
+      "configs_per_second": 11916267.925836435,
+      "seconds": 0.010999417
+    },
+    {
+      "backend": "cpu_scalar_1t",
+      "batch": 131072,
+      "configs_per_second": 1099447.0453753083,
+      "seconds": 0.119216292
+    },
+    {
+      "backend": "cpu_lanes_14t",
+      "batch": 131072,
+      "configs_per_second": 12590717.439006267,
+      "seconds": 0.010410209
+    },
+    {
+      "backend": "cpu_lanes_1t",
+      "batch": 131072,
+      "configs_per_second": 1130024.388135444,
+      "seconds": 0.115990417
+    },
+    {
+      "backend": "cpu_lanes_min_14t",
+      "batch": 131072,
+      "configs_per_second": 12684540.94798053,
+      "seconds": 0.010333208
+    },
+    {
+      "backend": "cpu_lanes_min_1t",
+      "batch": 131072,
+      "configs_per_second": 1195793.2985817462,
+      "seconds": 0.109610917
+    },
+    {
+      "backend": "gpu_fused_full_throughput",
+      "batch": 131072,
+      "configs_per_second": 103613164.44969341,
+      "seconds": 0.001265013
+    },
+    {
+      "backend": "gpu_fused_min_throughput",
+      "batch": 131072,
+      "configs_per_second": 152163717.16346174,
+      "seconds": 0.000861388
+    },
+    {
+      "backend": "gpu_split_throughput",
+      "batch": 131072,
+      "configs_per_second": 69879090.27950677,
+      "seconds": 0.001875697
+    },
+    {
+      "backend": "gpu_fused_min_latency",
+      "batch": 131072,
+      "configs_per_second": 125058678.5028681,
+      "seconds": 0.001048084
+    },
+    {
+      "backend": "gpu_fused_min_round_trip",
+      "batch": 131072,
+      "configs_per_second": 91426977.06861976,
+      "seconds": 0.001433625
+    },
+    {
+      "backend": "cubecl_full_throughput",
+      "batch": 131072,
+      "configs_per_second": 100302118.50269212,
+      "seconds": 0.001306772
+    },
+    {
+      "backend": "cubecl_min_throughput",
+      "batch": 131072,
+      "configs_per_second": 145989336.38071817,
+      "seconds": 0.000897819
+    },
+    {
+      "backend": "cubecl_min_specialized_throughput",
+      "batch": 131072,
+      "configs_per_second": 136747000.5216484,
+      "seconds": 0.0009585
+    },
+    {
+      "backend": "cubecl_min_latency",
+      "batch": 131072,
+      "configs_per_second": 119084155.33490147,
+      "seconds": 0.001100667
+    },
+    {
+      "backend": "cubecl_min_round_trip",
+      "batch": 131072,
+      "configs_per_second": 79032402.97167431,
+      "seconds": 0.001658459
+    },
+    {
+      "backend": "cpu_scalar_14t",
+      "batch": 524288,
+      "configs_per_second": 11686444.991671963,
+      "seconds": 0.044862916
+    },
+    {
+      "backend": "cpu_scalar_1t",
+      "batch": 524288,
+      "configs_per_second": 1072472.9319576055,
+      "seconds": 0.488858958
+    },
+    {
+      "backend": "cpu_lanes_14t",
+      "batch": 524288,
+      "configs_per_second": 12501775.576522574,
+      "seconds": 0.041937083
+    },
+    {
+      "backend": "cpu_lanes_1t",
+      "batch": 524288,
+      "configs_per_second": 1117689.9400947117,
+      "seconds": 0.469081792
+    },
+    {
+      "backend": "cpu_lanes_min_14t",
+      "batch": 524288,
+      "configs_per_second": 13377651.635375606,
+      "seconds": 0.039191333
+    },
+    {
+      "backend": "cpu_lanes_min_1t",
+      "batch": 524288,
+      "configs_per_second": 1194409.8607704951,
+      "seconds": 0.4389515
+    },
+    {
+      "backend": "gpu_fused_full_throughput",
+      "batch": 524288,
+      "configs_per_second": 107705749.29315843,
+      "seconds": 0.004867781
+    },
+    {
+      "backend": "gpu_fused_min_throughput",
+      "batch": 524288,
+      "configs_per_second": 162887717.6805103,
+      "seconds": 0.003218708
+    },
+    {
+      "backend": "gpu_split_throughput",
+      "batch": 524288,
+      "configs_per_second": 69792040.78301993,
+      "seconds": 0.007512146
+    },
+    {
+      "backend": "gpu_fused_min_latency",
+      "batch": 524288,
+      "configs_per_second": 154573647.93608648,
+      "seconds": 0.003391833
+    },
+    {
+      "backend": "gpu_fused_min_round_trip",
+      "batch": 524288,
+      "configs_per_second": 106236916.38012978,
+      "seconds": 0.004935083
+    },
+    {
+      "backend": "cubecl_full_throughput",
+      "batch": 524288,
+      "configs_per_second": 104004121.37913851,
+      "seconds": 0.005041031
+    },
+    {
+      "backend": "cubecl_min_throughput",
+      "batch": 524288,
+      "configs_per_second": 156684652.59172148,
+      "seconds": 0.003346135
+    },
+    {
+      "backend": "cubecl_min_specialized_throughput",
+      "batch": 524288,
+      "configs_per_second": 144859711.08626273,
+      "seconds": 0.003619281
+    },
+    {
+      "backend": "cubecl_min_latency",
+      "batch": 524288,
+      "configs_per_second": 148519978.56141666,
+      "seconds": 0.003530084
+    },
+    {
+      "backend": "cubecl_min_round_trip",
+      "batch": 524288,
+      "configs_per_second": 88864873.14727838,
+      "seconds": 0.005899834
+    }
+  ],
+  "robot": "ur5_robot",
+  "spheres": 32
+}

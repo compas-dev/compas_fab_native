@@ -11,6 +11,7 @@ use motion_core::cpu::{query_lanes, query_lanes_min, query_scalar, BatchOutput, 
 use motion_core::reference::distance_query;
 use motion_core::sampling::random_configurations;
 use motion_core::{load_robot, load_scene, ModelBuffers};
+use motion_cubecl::{CubeclQuery, Kernel as CubeKernel};
 use motion_gpu::{GpuContext, GpuQuery, Kernel};
 
 const BATCHES: &[usize] = &[1, 8, 64, 512, 4096, 32768, 131072, 524288];
@@ -112,6 +113,11 @@ fn compare(label: &str, oracle: &BatchOutput, other: &BatchOutput) -> (f32, f32,
     (dist, grad, disagree)
 }
 
+/// `MOTION_BENCH_NO_CUBECL=1` skips the CubeCL backend.
+fn cubecl_enabled() -> bool {
+    std::env::var_os("MOTION_BENCH_NO_CUBECL").is_none()
+}
+
 fn main() {
     let a = args();
     let (model, _) = load_robot(&std::fs::read_to_string(&a.robot).unwrap()).unwrap();
@@ -136,6 +142,38 @@ fn main() {
             ctx.info.name, ctx.info.backend, ctx.info.device_type
         ),
         Err(e) => println!("GPU: unavailable ({e})"),
+    }
+
+    // ---- First use: pipeline creation / JIT + first run -------------------------
+    {
+        let q: Vec<f32> = random_configurations(&model, 1024, 9)
+            .iter()
+            .map(|&v| v as f32)
+            .collect();
+        if let Ok(ctx) = &gpu {
+            let t = Instant::now();
+            let gq = GpuQuery::new(ctx, &buffers, 1024).unwrap();
+            let created = t.elapsed();
+            gq.round_trip_min(&q, Kernel::FusedMin);
+            println!(
+                "first use, wgpu:   pipelines {} + first run {}",
+                fmt_time(created),
+                fmt_time(t.elapsed() - created)
+            );
+        }
+        if cubecl_enabled() {
+            for kernel in [CubeKernel::FusedMin, CubeKernel::FusedMinSpecialized] {
+                let t = Instant::now();
+                let mut cq = CubeclQuery::new(&buffers, 1024);
+                let created = t.elapsed();
+                cq.round_trip_min(&q, kernel);
+                println!(
+                    "first use, CubeCL {kernel:?}: setup {} + JIT and first run {}",
+                    fmt_time(created),
+                    fmt_time(t.elapsed() - created)
+                );
+            }
+        }
     }
 
     // ---- Correctness ------------------------------------------------------------
@@ -176,6 +214,23 @@ fn main() {
             "gpu_fused_min",
             compare("gpu_fused_min", &oracle, &min_only),
         ));
+    }
+    if cubecl_enabled() {
+        let mut cq = CubeclQuery::new(&buffers, check_batch);
+        checks.push((
+            "cubecl_fused_full",
+            compare("cubecl_fused_full", &oracle, &cq.run_full(&q)),
+        ));
+        for (name, kernel) in [
+            ("cubecl_fused_min", CubeKernel::FusedMin),
+            ("cubecl_min_specialized", CubeKernel::FusedMinSpecialized),
+        ] {
+            let mut min_only = BatchOutput::new(check_batch, n_spheres);
+            min_only.sphere_dist.clone_from(&oracle.sphere_dist);
+            min_only.sphere_grad.clone_from(&oracle.sphere_grad);
+            min_only.config_min = cq.round_trip_min(&q, kernel).0;
+            checks.push((name, compare(name, &oracle, &min_only)));
+        }
     }
     // f64 reference vs f32 oracle, as a sanity bound on f32 itself.
     let mut f64_err = 0.0f64;
@@ -294,6 +349,57 @@ fn main() {
                             time: t,
                         });
                     }
+                    for (name, kernel) in [("min", Kernel::FusedMin), ("split", Kernel::Split)] {
+                        let mut gpu_times = Vec::new();
+                        for _ in 0..21 {
+                            if let Some(t) = gq.time_gpu(kernel) {
+                                gpu_times.push(t);
+                            }
+                        }
+                        if !gpu_times.is_empty() {
+                            gpu_times.sort();
+                            rows.push(Row {
+                                backend: format!("gpu_{name}_kernel_only_timestamps"),
+                                batch,
+                                time: gpu_times[gpu_times.len() / 2],
+                            });
+                        }
+                    }
+                    if batch == 1 || batch == 4096 || batch == 131072 {
+                        // Fixed vs per-dispatch cost: total(n) = fixed + n * per_dispatch.
+                        let ns = [1u32, 2, 4, 8, 16];
+                        let totals: Vec<f64> = ns
+                            .iter()
+                            .map(|&n| {
+                                median_time(
+                                    || gq.time_throughput(Kernel::FusedMin, n) * n,
+                                    9,
+                                    budget,
+                                )
+                                .as_secs_f64()
+                            })
+                            .collect();
+                        let xs: Vec<f64> = ns.iter().map(|&n| n as f64).collect();
+                        let (mx, my) = (
+                            xs.iter().sum::<f64>() / xs.len() as f64,
+                            totals.iter().sum::<f64>() / xs.len() as f64,
+                        );
+                        let slope = xs
+                            .iter()
+                            .zip(&totals)
+                            .map(|(x, y)| (x - mx) * (y - my))
+                            .sum::<f64>()
+                            / xs.iter().map(|x| (x - mx).powi(2)).sum::<f64>();
+                        println!(
+                            "  wgpu fused_min, batch {batch}: per submission {:.1} µs fixed + {:.1} µs per dispatch",
+                            (my - slope * mx) * 1e6,
+                            slope * 1e6
+                        );
+                    }
+                    if batch == 1 {
+                        let t = median_time(|| gq.time_empty_submit(), 20, budget);
+                        println!("  wgpu empty submit + wait: {}", fmt_time(t));
+                    }
                     let t = median_time(|| gq.time_latency(Kernel::FusedMin), 5, budget);
                     rows.push(Row {
                         backend: "gpu_fused_min_latency".into(),
@@ -309,6 +415,35 @@ fn main() {
                 }
                 Err(e) => println!("  skipping GPU at batch {batch}: {e}"),
             }
+        }
+        if cubecl_enabled() && batch * n_spheres * 16 <= 1 << 30 {
+            let mut cq = CubeclQuery::new(&buffers, batch);
+            cq.upload_q(&q);
+            for (name, kernel) in [
+                ("full", CubeKernel::FusedFull),
+                ("min", CubeKernel::FusedMin),
+                ("min_specialized", CubeKernel::FusedMinSpecialized),
+            ] {
+                let reps = (2_000_000 / batch).clamp(4, 200) as u32;
+                let t = median_time(|| cq.time_throughput(kernel, reps), 3, budget);
+                rows.push(Row {
+                    backend: format!("cubecl_{name}_throughput"),
+                    batch,
+                    time: t,
+                });
+            }
+            let t = median_time(|| cq.time_latency(CubeKernel::FusedMin), 5, budget);
+            rows.push(Row {
+                backend: "cubecl_min_latency".into(),
+                batch,
+                time: t,
+            });
+            let t = median_time(|| cq.round_trip_min(&q, CubeKernel::FusedMin).1, 5, budget);
+            rows.push(Row {
+                backend: "cubecl_min_round_trip".into(),
+                batch,
+                time: t,
+            });
         }
     }
 

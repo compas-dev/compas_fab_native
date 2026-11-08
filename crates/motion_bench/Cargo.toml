@@ -10,3 +10,7 @@ motion_core.workspace = true
 motion_gpu.workspace = true
 serde_json.workspace = true
 rayon.workspace = true
+motion_cubecl = { path = "../motion_cubecl" }
+
+[features]
+msl = ["motion_cubecl/msl"]

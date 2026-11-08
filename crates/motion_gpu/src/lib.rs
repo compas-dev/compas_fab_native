@@ -48,6 +48,7 @@ impl GpuContext {
             let (device, queue) = adapter
                 .request_device(&wgpu::DeviceDescriptor {
                     label: Some("motion_gpu"),
+                    required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
                     required_limits: wgpu::Limits {
                         max_storage_buffer_binding_size: limits.max_storage_buffer_binding_size,
                         max_buffer_size: limits.max_buffer_size,
@@ -283,9 +284,22 @@ impl<'a> GpuQuery<'a> {
     }
 
     fn encode_pass(&self, encoder: &mut wgpu::CommandEncoder, kernel: Kernel) {
+        self.encode_pass_timed(encoder, kernel, None);
+    }
+
+    fn encode_pass_timed(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        kernel: Kernel,
+        timestamps: Option<&wgpu::QuerySet>,
+    ) {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: None,
-            timestamp_writes: None,
+            timestamp_writes: timestamps.map(|query_set| wgpu::ComputePassTimestampWrites {
+                query_set,
+                beginning_of_pass_write_index: Some(0),
+                end_of_pass_write_index: Some(1),
+            }),
         });
         pass.set_bind_group(0, &self.bind_group, &[]);
         let per_config = dispatch_dims(self.batch as u32);
@@ -331,6 +345,51 @@ impl<'a> GpuQuery<'a> {
     pub fn time_latency(&self, kernel: Kernel) -> Duration {
         let mut encoder = self.ctx.device.create_command_encoder(&Default::default());
         self.encode_pass(&mut encoder, kernel);
+        let t = Instant::now();
+        self.ctx.queue.submit([encoder.finish()]);
+        self.wait();
+        t.elapsed()
+    }
+
+    /// GPU-side duration of one pass (timestamp queries), if the device supports them.
+    pub fn time_gpu(&self, kernel: Kernel) -> Option<Duration> {
+        if !self
+            .ctx
+            .device
+            .features()
+            .contains(wgpu::Features::TIMESTAMP_QUERY)
+        {
+            return None;
+        }
+        let set = self.ctx.device.create_query_set(&wgpu::QuerySetDescriptor {
+            label: Some("timestamps"),
+            ty: wgpu::QueryType::Timestamp,
+            count: 2,
+        });
+        let resolve = self.ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("timestamps"),
+            size: 16,
+            usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self.ctx.device.create_command_encoder(&Default::default());
+        self.encode_pass_timed(&mut encoder, kernel, Some(&set));
+        encoder.resolve_query_set(&set, 0..2, &resolve, 0);
+        let staging = self.copy_to_staging(&mut encoder, &resolve, 16);
+        self.ctx.queue.submit([encoder.finish()]);
+        let ticks = self.read_staging::<u64>(&staging);
+        if ticks[0] == 0 && ticks[1] == 0 {
+            // Feature advertised but no timestamps written (seen on Apple Silicon / Metal).
+            return None;
+        }
+        let ns =
+            ticks[1].saturating_sub(ticks[0]) as f64 * self.ctx.queue.get_timestamp_period() as f64;
+        Some(Duration::from_nanos(ns as u64))
+    }
+
+    /// Submit an empty command buffer and wait: the floor under every launch.
+    pub fn time_empty_submit(&self) -> Duration {
+        let encoder = self.ctx.device.create_command_encoder(&Default::default());
         let t = Instant::now();
         self.ctx.queue.submit([encoder.finish()]);
         self.wait();

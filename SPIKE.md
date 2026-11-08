@@ -1,9 +1,9 @@
-# Native motion core: Phase 0 spike (wgpu)
+# Native motion core: Phase 0 spike
 
 Spike for the PRD "compas_fab native motion core (planning + perception)", Phase 0:
-the batched sphere-distance kernel on a portable GPU path (wgpu first; CubeCL to follow
-for the comparison), the buffer layouts including voxel blocks, and first baselines
-against the current compas_fab backends.
+the batched sphere-distance kernel on both portable GPU candidates (wgpu + WGSL, and
+CubeCL), the buffer layouts including voxel blocks, and first baselines against the
+current compas_fab backends.
 
 Nothing here is a compas_fab backend yet, and nothing is wired into the Python package.
 
@@ -17,6 +17,7 @@ native/
   fixtures/scene_boxes.json     4 cuboids (table, column, rotated beam, wall)
   crates/motion_core            layouts (layout.rs), f64 reference, CPU f32 kernels (scalar + 8-lane), sampling
   crates/motion_gpu             wgpu host code + query.wgsl (fused full, fused min-only, split)
+  crates/motion_cubecl          the same kernel in CubeCL (fused full, fused min-only, min-only specialized per robot)
   crates/motion_bench           oracle checks + timing (motion_bench), sphere vs mesh verdicts (compare_verdicts)
   results/                      raw numbers from the runs below
 ```
@@ -31,7 +32,7 @@ Run:
 ```bash
 cd native
 cargo test --release                      # oracle chain: compas_robots -> f64 -> f32 CPU
-cargo run --release --bin motion_bench -- --out results/<machine>.json
+cargo run --release --bin motion_bench -- --out results/<machine>.json   # MOTION_BENCH_NO_CUBECL=1 to skip CubeCL
 python scripts/baseline_python.py ur5 fixtures/scene_boxes.json results/baseline_python.json   # from compas_fab's venv
 cargo run --release --bin compare_verdicts -- results/baseline_python.json
 ```
@@ -47,7 +48,8 @@ UR5, 32 spheres, 4 cuboids. Full table in `results/m3max.json`.
 | Rust f64 FK vs compas_robots (50 configs, every link frame) | < 1e-9 | – |
 | CPU f32 vs f64 reference | 1.1e-7 m | – |
 | CPU 8-lane vs CPU scalar | 0 (bit-identical) | 0 / 4096 |
-| GPU fused / split / min-only vs CPU scalar | 3.0e-7 m, gradient 1.0e-5 | 0 / 4096 |
+| GPU (wgpu) fused / split / min-only vs CPU scalar | 3.0e-7 m, gradient 1.0e-5 | 0 / 4096 |
+| GPU (CubeCL) fused / min-only / specialized vs CPU scalar | 3.0e-7 m, gradient 1.0e-5 | 0 / 4096 |
 | Sphere model vs PyBullet exact meshes (1000 configs) | – | 0 missed collisions; 76 false alarms (11% of free configs) |
 
 ### Throughput (configurations / second)
@@ -63,6 +65,50 @@ UR5, 32 spheres, 4 cuboids. Full table in `results/m3max.json`.
 | GPU fused min-only, one submit + wait | 39 k | 2.4 M | 19 M | 78 M | 159 M |
 | GPU fused min-only, upload + run + async readback | 36 k | 2.3 M | 17 M | 59 M | 110 M |
 | GPU split (3 dispatches), many per submit | 0.22 M | 12.7 M | 77 M | 78 M | 73 M |
+| CubeCL fused min-only, many launches per sync | 0.24 M | 14.7 M | 109 M | 130 M | 154 M |
+| CubeCL min-only, specialized (unrolled per robot) | 0.23 M | 14.6 M | 110 M | 125 M | 144 M |
+| CubeCL fused min-only, one launch + sync | 37 k | 2.3 M | 19 M | 72 M | 147 M |
+
+## Phase 0 gate: wgpu + WGSL or CubeCL?
+
+Same kernel, same layout, same harness, Apple M3 Max (Metal):
+
+| | wgpu + WGSL | CubeCL 0.11 (wgpu runtime) |
+|---|---|---|
+| Correctness vs CPU oracle | 3e-7 m, 0 verdicts differ | identical |
+| Peak throughput (min-only, 524k) | 161–168 M/s | 154 M/s (−5%) |
+| Small batches, many launches per submit | 43 µs / launch | 34 µs / launch (better) |
+| One launch + wait | ~205–215 µs | ~215 µs |
+| First use (pipeline / JIT + first run) | 8–12 ms | 15–27 ms; **2.1 s** for the per-robot specialized kernel |
+| Compile-time specialization (unrolled loops) | n/a | no runtime gain here (−6% at scale) |
+| Dependency tree (normal deps) | 96 crates | 437 crates |
+| Kernel source | 256 lines WGSL + 458 host | 566 lines Rust (kernel + host) |
+| Other targets for free | WebGPU, Vulkan, DX12, Metal | the same, plus CUDA, ROCm and a CPU (MLIR) runtime |
+| API stability | wgpu 30, stable surface | 0.x; launch/handle/runtime APIs needed source digging |
+
+Where the launch time goes (wgpu, fit over 1–16 dispatches per submission):
+**~150 µs fixed per submission with compute work** (an empty submit + wait is 18 µs),
+plus **~44 µs per dispatch even for one configuration**: one thread's serial chain
+(FK + 128 sphere-box tests) is the critical path, not throughput. Timestamp queries
+are advertised on this GPU but only return values for the longest kernels, so they
+can't separate kernel time at small sizes here.
+
+**Recommendation: wgpu + WGSL as the portable GPU path.** Performance is a wash; wgpu
+wins on first-use latency, dependency weight, API stability and the direct fit to
+WebGPU (the browser target), and the kernels are small enough that hand-written WGSL
+is no burden. CubeCL's real advantage is reaching CUDA (and ROCm) from the same source;
+the PRD already treats CUDA as an optional per-kernel path decided by benchmark, so
+that decision can be taken in Phase 2 on the kernels that need it, with CubeCL as the
+first candidate for it. Specializing kernels per robot is not worth it (no runtime
+gain, 2 s JIT) unless a persistent kernel cache is used.
+
+Implications for Phase 1/2 design, independent of the stack:
+- Per-launch cost (~0.2 ms) means one GPU round trip per solver iteration caps a
+  planner at a few thousand iterations per second. Iterations must be fused into one
+  submission, or small problems stay on the CPU.
+- Thread mapping must adapt to the batch: one thread per configuration is right at
+  scale, but for small batches threads per (configuration, sphere group) with a
+  workgroup reduction cut the serial chain.
 
 ## Findings
 
@@ -95,12 +141,10 @@ UR5, 32 spheres, 4 cuboids. Full table in `results/m3max.json`.
    structs (no vec3 in storage, explicit padding) worked first time; the async-only
    readback required by WebGPU costs little natively.
 
-## Not done yet (needed for the Phase 0 gate)
+## Not done yet
 
-- **CubeCL version of the same kernel**, in the same harness, to choose the portable
-  GPU stack. The harness takes a new backend as one more row.
-- GPU timestamp queries, to separate kernel time from submission overhead in the
-  latency numbers.
+- CubeCL compiling to MSL directly (`--features msl`) gave the same numbers, but I could
+  not confirm the MSL path was active; CubeCL's CPU (MLIR) runtime not tried.
 - Runs on Windows (DX12/Vulkan) and an NVIDIA machine; cuRobo and MoveIt baselines.
 - Self-collision (robot spheres vs robot spheres) is not in the query yet; the
   PyBullet comparison above is robot-vs-obstacles only.
