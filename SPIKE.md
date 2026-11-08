@@ -1,11 +1,17 @@
-# Native motion core: Phase 0 spike
+# Native motion core: spike (Phase 0 and first Phase 1 pieces)
 
-Spike for the PRD "compas_fab native motion core (planning + perception)", Phase 0:
-the batched sphere-distance kernel on both portable GPU candidates (wgpu + WGSL, and
-CubeCL), the buffer layouts including voxel blocks, and first baselines against the
-current compas_fab backends.
+Spike for the PRD "compas_fab native motion core (planning + perception)".
 
-Nothing here is a compas_fab backend yet, and nothing is wired into the Python package.
+* **Phase 0:** the batched sphere-distance kernel on both portable GPU candidates
+  (wgpu + WGSL, and CubeCL), buffer layouts including voxel blocks, first baselines
+  against the current compas_fab backends, and a recommendation for the GPU stack.
+* **Phase 1, first pieces (CPU):** closed-form IK, self-collision, the layered-graph
+  Cartesian planner, Python bindings and a `NativePlanner` compas_fab backend, benchmarked
+  against compas_fab's existing Cartesian planners.
+
+Jump to: [Phase 0 gate](#phase-0-gate-wgpu--wgsl-or-cubecl) ·
+[Phase 1 progress](#phase-1-progress-cpu-core-cartesian-planning-compas_fab-backend) ·
+[Open issues](#open-issues-and-next-steps)
 
 ## What is here
 
@@ -18,9 +24,19 @@ native/
   crates/motion_core            layouts (layout.rs), f64 reference, CPU f32 kernels (scalar + 8-lane), sampling
   crates/motion_gpu             wgpu host code + query.wgsl (fused full, fused min-only, split)
   crates/motion_cubecl          the same kernel in CubeCL (fused full, fused min-only, min-only specialized per robot)
-  crates/motion_bench           oracle checks + timing (motion_bench), sphere vs mesh verdicts (compare_verdicts)
+  crates/motion_bench           oracle checks + timing (motion_bench), sphere vs mesh verdicts (compare_verdicts),
+                                Cartesian planner on the baseline's waypoints (cartesian_bench)
+  crates/motion_py              PyO3 extension `compas_fab_native` (NativeCore)
+  scripts/baseline_cartesian.py compas_fab's Cartesian planners vs NativePlanner on the same path
   results/                      raw numbers from the runs below
+
+src/compas_fab/backends/native  NativePlanner: the core as a compas_fab backend (model.py builds the
+                                robot/scene descriptions from a RobotCell, planner.py the features)
+tests/backends/native           backend tests (skipped unless compas_fab_native is importable)
 ```
+
+`scripts/export_robot.py` predates `compas_fab.backends.native.model` and keeps its own
+copy of the fitting code so `fixtures/ur5.json` (and the numbers below) stay reproducible.
 
 The operation in every backend: configurations (SoA, `q[j * B + b]`) -> batched FK ->
 link spheres in world -> signed distance to the nearest cuboid minus radius, with
@@ -35,6 +51,12 @@ cargo test --release                      # oracle chain: compas_robots -> f64 -
 cargo run --release --bin motion_bench -- --out results/<machine>.json   # MOTION_BENCH_NO_CUBECL=1 to skip CubeCL
 python scripts/baseline_python.py ur5 fixtures/scene_boxes.json results/baseline_python.json   # from compas_fab's venv
 cargo run --release --bin compare_verdicts -- results/baseline_python.json
+
+# Python extension + backend (no maturin needed for the spike)
+PYO3_PYTHON=../.venv/bin/python cargo build --release -p motion_py
+cp target/release/libcompas_fab_native.dylib python/compas_fab_native.abi3.so
+cd .. && PYTHONPATH=native/python python -m pytest tests/backends/native
+PYTHONPATH=native/python python native/scripts/baseline_cartesian.py native/fixtures/scene_boxes.json native/results/baseline_cartesian.json
 ```
 
 ## Results (Apple M3 Max, 14 CPU threads, Metal via wgpu 30)
@@ -50,7 +72,7 @@ UR5, 32 spheres, 4 cuboids. Full table in `results/m3max.json`.
 | CPU 8-lane vs CPU scalar | 0 (bit-identical) | 0 / 4096 |
 | GPU (wgpu) fused / split / min-only vs CPU scalar | 3.0e-7 m, gradient 1.0e-5 | 0 / 4096 |
 | GPU (CubeCL) fused / min-only / specialized vs CPU scalar | 3.0e-7 m, gradient 1.0e-5 | 0 / 4096 |
-| Sphere model vs PyBullet exact meshes (1000 configs) | – | 0 missed collisions; 76 false alarms (11% of free configs) |
+| Covering spheres vs PyBullet (convex hulls of the meshes), 1000 configs | – | 0 missed collisions; 76 false alarms (11% of free configs) |
 
 ### Throughput (configurations / second)
 
@@ -141,12 +163,112 @@ Implications for Phase 1/2 design, independent of the stack:
    structs (no vec3 in storage, explicit padding) worked first time; the async-only
    readback required by WebGPU costs little natively.
 
-## Not done yet
+## Phase 1 progress: CPU core, Cartesian planning, compas_fab backend
+
+### Closed-form IK
+
+`motion_core::ik`: the offset-wrist (UR) closed form ported from compas_fab's
+`offset_wrist.py` (itself from ROS `ur_kin.cpp`), working in model terms: the target is
+the `tool0` frame and solutions are model joint values wrapped into the limits.
+
+- The closed-form chain matches the model FK to < 1e-9 (500 random configurations).
+- 2000 random targets, 14,376 solutions: every one reaches its target within 6e-10.
+  8 solutions near singularities were off by ~1e-5 before a damped Newton polish (now
+  fixed or dropped). The source configuration is recovered for every target except at
+  wrist singularities (sin q5 ≈ 0), where q4 + q6 is all that is determined and IK
+  returns other valid configurations.
+- Spherical-wrist arms (ABB, Stäubli) are not ported yet.
+
+### Self-collision and the sphere model
+
+Self-collision checks sphere pairs between links not disabled in the SRDF. Getting the
+sphere model right took most of the night; what was learned:
+
+| sphere model | self-collision verdicts (1000 random configs) |
+|---|---|
+| covering spheres (k-means, enclose the surface) | ~99% of configs flagged: neighbouring links' spheres overlap permanently (forearm vs wrist 2 in 98% of configs) |
+| covering + auto-disable "always colliding" pairs | hides real collisions: PyBullet reports forearm vs wrist 2 in 27% of configs |
+| **inscribed spheres** (inside the mesh, trimesh signed distance, 1 cm surface tolerance, 100 spheres) | **3.9% missed** real self-collisions, 5% false alarms (vs exact meshes) |
+| inscribed, 5 mm tolerance (196 spheres) | 1.8% missed |
+
+"Exact meshes" means dense surface samples of one link tested against the other's
+watertight mesh. PyBullet is **not** ground truth here: it collides convex hulls, and in
+92 of 181 disagreements the spheres were right and PyBullet wrong. Remaining misses are
+almost all forearm vs wrist 2/3, where clearances are below the fitting tolerance.
+
+For obstacles the same trade-off shows (vs PyBullet, then exact meshes on the disputes):
+
+| obstacle spheres | false alarms | missed real contacts |
+|---|---|---|
+| covering (32 spheres) | 11.4% | 0 |
+| inscribed + 1 cm | 0.9% | ~16 (vs hulls) |
+| **inscribed + 2 cm (backend default)** | 1.9% | 2–3 per 1000 (exact meshes; thin edges) |
+
+Covering spheres also break any cell with a floor: spheres around joint housings poke
+through the floor the robot stands on, so every pose collides. The backend therefore
+uses one inscribed set (+2 cm padding for obstacles); `sphere_options={"obstacle_spheres":
+"covering"}` keeps the conservative variant. Either way **the PRD's exact-mesh final
+pass on candidate paths is required** before execution.
+
+Two MoveIt-style rules make tools and floors work: link pairs whose self spheres overlap
+in ≥ 95% of random configurations are disabled (an attached tool against the wrist it is
+mounted on), and obstacle spheres that overlap a box in ≥ 95% of configurations are
+exempted from it (the bottom of the shoulder above the floor) — per sphere, so the rest
+of the link is still checked. compas_fab's `RigidBodyState.touch_links` are honoured.
+
+### Cartesian planner (layered graph + DP)
+
+`motion_core::cartesian`: one layer per waypoint; nodes are all IK solutions, sampled
+over a free rotation about the tool axis; all nodes of all layers are collision-checked
+in one batch; DP finds the cheapest continuous path (joint step limit, 2π-equivalents for
+joints with > 2π range); edges on the best path are interpolated and checked lazily.
+
+Line over the table, 100 waypoints, UR5, same scene and waypoints for every planner:
+
+| planner | time | |
+|---|---|---|
+| compas_fab `AnalyticalPyBulletPlanner` | – | **broken in 2.1**: passes `Frame`s to `iter_inverse_kinematics`, which only accepts `FrameTarget` (its tests are commented out) |
+| same, with that one-line fix applied in the benchmark | 306 ms | one IK branch for the whole path |
+| compas_fab `PyBulletPlanner` | fails | numeric IK gives up at segment 68 (162 ms for the first 60 waypoints) |
+| **Rust core**, fixed tool axis | **0.64 ms** | |
+| Rust core, 12 tool-axis samples (9,600 IK nodes) | 3.9 ms | not available in compas_fab |
+| **`NativePlanner.plan_cartesian_motion`** (through the compas_fab API) | **1.6 ms** | ~190× the fixed analytical planner |
+| `NativePlanner`, 12 tool-axis samples | 5.4 ms | |
+| `NativePlanner.set_robot_cell` (sphere fitting, once per cell) | 1.7 s | trimesh signed distance; cacheable |
+
+Through the API, half of the first version's 10 ms went to compas_fab's
+`Target.normalized_to_meters` (deep-copies all waypoints even at scale 1) and a
+determinant-based matrix inverse per waypoint; both are avoided now.
+
+### NativePlanner (compas_fab backend)
+
+`compas_fab.backends.native.NativePlanner(UR5Kinematics())` implements
+`set_robot_cell(_state)`, `forward_kinematics`, `iter_inverse_kinematics`,
+`check_collision` and `plan_cartesian_motion` (`TargetMode.ROBOT` and `TOOL`, option
+`free_axis_samples`). Tests (`tests/backends/native`) check FK against compas_robots
+(with a moved robot base), IK round trips, collisions with a box, and Cartesian paths in
+robot and tool mode (UR5 with the cone tool, free axis). The rest of the compas_fab
+suite is unaffected (195 passed, 22 skipped).
+
+## Open issues and next steps
+
+- **Exact-mesh final pass** on planned paths (PRD mitigation) — needed before anyone
+  executes a native plan; the sphere model misses a few contacts per thousand.
+- **compas_fab bug:** `AnalyticalPyBulletPlanner.plan_cartesian_motion` /
+  `AnalyticalKinematicsPlanner.plan_cartesian_motion` with frame waypoints always raise
+  `BackendTargetNotSupportedError` (wrap frames in `FrameTarget`), and the tests that
+  would catch it are commented out. Worth fixing on `main` independently of this spike.
+- Spherical-wrist IK (ABB, Stäubli), external axes, 7-DoF redundancy sampling.
+- Obstacles beyond boxes: meshes (BVH) and the offline ESDF (voxel layout is defined).
+- Attached workpieces are ignored by the backend; tools are supported.
+- Explicit SIMD on the CPU (finding 4); the self-collision pair loop is now the largest
+  CPU cost (1,984 pairs for the UR5).
+- Packaging: maturin / abi3 wheels through compas-actions; the spike builds with cargo.
+
+### Phase 0 leftovers
 
 - CubeCL compiling to MSL directly (`--features msl`) gave the same numbers, but I could
   not confirm the MSL path was active; CubeCL's CPU (MLIR) runtime not tried.
 - Runs on Windows (DX12/Vulkan) and an NVIDIA machine; cuRobo and MoveIt baselines.
-- Self-collision (robot spheres vs robot spheres) is not in the query yet; the
-  PyBullet comparison above is robot-vs-obstacles only.
 - Voxel-block layout is defined (`layout.rs`) but not exercised by a kernel.
-- Better sphere fitting (the 11% false alarms) and compas_pb messages for the model.
+- compas_pb messages for the model (the spike passes JSON).
