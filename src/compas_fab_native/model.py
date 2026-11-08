@@ -8,7 +8,10 @@ scene as oriented boxes. This module builds those descriptions from compas_fab o
   and spheres inscribed in the link meshes for self-collision (covering spheres of
   neighbouring links overlap permanently);
 * attached tools, as extra spheres on the end-effector link;
-* static rigid bodies, as oriented bounding boxes (conservative).
+* static rigid bodies, as oriented bounding boxes (conservative);
+* links that no joint of the planning group moves (e.g. the other bridge of a
+  multi-robot cell), as static obstacles posed at the cell state's configuration. They
+  are left out of the kinematic tree, which keeps large cells within the core's link cap.
 
 Sphere fitting needs numpy, and trimesh for the inscribed set.
 """
@@ -21,6 +24,8 @@ from compas.geometry import Frame
 from compas.geometry import Transformation
 
 JOINT_TYPES = {0: "revolute", 1: "continuous", 2: "prismatic", 3: "fixed"}
+MAX_SPHERES = 256  # per robot, in the core (layout.rs)
+DEFAULT_MAX_SPHERES = 16  # per link, see fit_sphere_sets
 
 
 def frame_to_3x4(frame) -> list:
@@ -238,6 +243,47 @@ def topological_links(robot_model):
     return out
 
 
+def planning_links(robot_cell, group=None):
+    """Split the links into the kinematic tree the core plans with and the static rest.
+
+    The tree keeps every link a joint of ``group`` moves, and their ancestors (parent
+    indices are remapped). The other links stand still while the group plans: with the
+    group's joints fixed, nothing can move them but joints outside the group, whose values
+    come from the cell state. They become obstacles (see ``static_link_obstacles``), and
+    so does the geometry of the static ancestors, which stay in the tree as frames only.
+
+    Returns
+    -------
+    tuple
+        ``(tree, static)``: ``(link, parent index, joint)`` in topological order, and the
+        static links (with geometry, ancestors included).
+    """
+    group = group or robot_cell.main_group_name
+    joint_names = set(robot_cell.get_configurable_joint_names(group))
+    ordered = topological_links(robot_cell.robot_model)
+    moves = []
+    for _, parent, joint in ordered:
+        moves.append((joint is not None and joint.name in joint_names) or (parent >= 0 and moves[parent]))
+    keep = set()
+    for i, moving in enumerate(moves):
+        while moving and i >= 0 and i not in keep:
+            keep.add(i)
+            i = ordered[i][1]
+    if not keep or not any(ordered[i][0].collision for i in range(len(ordered)) if i not in keep):
+        # Nothing with geometry to prune (a single robot, maybe with frame-only links like
+        # UR's `base`): the whole tree, as it always was.
+        keep = set(range(len(ordered)))
+    tree, index = [], {}
+    for i, (link, parent, joint) in enumerate(ordered):
+        if i in keep:
+            index[i] = len(tree)
+            tree.append((link, index[parent] if parent >= 0 else -1, joint))
+    if len(tree) == len(ordered):
+        return tree, []  # nothing to prune: the usual single robot keeps its base as a link
+    static = [link for i, (link, _, _) in enumerate(ordered) if not moves[i]]
+    return tree, static
+
+
 def robot_description(robot_cell, group=None, kinematics_solver=None, seed=0, sphere_options=None) -> dict:
     """The robot of ``robot_cell`` as the native core's JSON description (without tools)."""
     sphere_options = sphere_options or {}
@@ -245,7 +291,8 @@ def robot_description(robot_cell, group=None, kinematics_solver=None, seed=0, sp
     model = robot_cell.robot_model
     group = group or robot_cell.main_group_name
     joint_names = robot_cell.get_configurable_joint_names(group)
-    ordered = topological_links(model)
+    ordered, static = planning_links(robot_cell, group)
+    static = {link.name for link in static}
 
     links = []
     for link, parent, joint in ordered:
@@ -263,12 +310,22 @@ def robot_description(robot_cell, group=None, kinematics_solver=None, seed=0, sp
             }
         links.append(entry)
 
-    spheres, self_spheres = [], []
+    geometry = {}
     for i, (link, _, _) in enumerate(ordered):
+        if link.name in static:
+            continue  # a static ancestor: its geometry is an obstacle
         tris = meshes_to_triangles(collision_items(link.collision))
-        if len(tris) == 0:
-            continue
-        covering, inscribed = fit_sphere_sets(tris, rng, **sphere_options)
+        if len(tris):
+            geometry[i] = tris
+    # Share the core's sphere budget between the links, keeping one link's worth for tools.
+    per_link = max(1, (MAX_SPHERES - DEFAULT_MAX_SPHERES) // max(1, len(geometry)))
+    link_options = dict(sphere_options)
+    for key in ("max_spheres", "max_self_spheres"):
+        link_options[key] = min(link_options.get(key, DEFAULT_MAX_SPHERES), per_link)
+
+    spheres, self_spheres = [], []
+    for i, tris in geometry.items():
+        covering, inscribed = fit_sphere_sets(tris, rng, **link_options)
         spheres += [{"link": i, "center": c.tolist(), "radius": r} for c, r in covering]
         self_spheres += [{"link": i, "center": c.tolist(), "radius": r} for c, r in inscribed]
 
@@ -344,11 +401,73 @@ def add_attached_tools(description, robot_cell, robot_cell_state, group, seed=0,
     return description
 
 
-def obstacle_boxes(robot_cell, robot_cell_state, only_touching=False) -> dict:
+def static_link_obstacles(robot_cell, robot_cell_state, group=None) -> list:
+    """The links ``group`` cannot move (see ``planning_links``) as obstacles: one per link
+    with geometry, ``(name, triangles in robot coordinates, touch links)``.
+
+    A static link may touch its parent and children and every moving link the SRDF
+    disables collisions with, which is what the core would have ignored had the link been
+    planned.
+    """
+    tree, static = planning_links(robot_cell, group)
+    if not static:
+        return []
+    moving = {link.name for link, _, _ in tree} - {link.name for link in static}
+    disabled = {}
+    for a, b in robot_cell.robot_semantics.disabled_collisions:
+        disabled.setdefault(a, set()).add(b)
+        disabled.setdefault(b, set()).add(a)
+    config = robot_cell_state.robot_configuration
+    joint_state = dict(zip(config.joint_names, config.joint_values)) if config and config.joint_names else {}
+    for joint in robot_cell.robot_model.get_configurable_joints():
+        joint_state.setdefault(joint.name, 0.0)
+    obstacles = []
+    for link in static:
+        if not link.collision:
+            continue
+        t_link = np.array(Transformation.from_frame(robot_cell.robot_model.forward_kinematics(joint_state, link.name)).matrix)
+        tris = meshes_to_triangles([(m, t_link @ t, scale) for m, t, scale in collision_items(link.collision)])
+        if len(tris) == 0:
+            continue
+        touch = disabled.get(link.name, set()) & moving
+        if link.parent_joint is not None and link.parent_joint.parent.link in moving:
+            touch.add(link.parent_joint.parent.link)
+        touch.update(j.child.link for j in link.joints if j.child.link in moving)
+        parts = connected_parts(tris)
+        for k, part in enumerate(parts):
+            name = "link:" + link.name + ("/{}".format(k) if len(parts) > 1 else "")
+            obstacles.append((name, part, sorted(touch)))
+    return obstacles
+
+
+def connected_parts(tris):
+    """Split a triangle soup into its connected parts (shared welded vertices), so that a
+    link like a hall of columns gets a box per column rather than one around the hall."""
+    verts, inverse = np.unique(np.round(tris.reshape(-1, 3), 6), axis=0, return_inverse=True)
+    faces = inverse.reshape(-1, 3)
+    parent = np.arange(len(verts))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for a, b, c in faces:
+        ra, rb, rc = find(a), find(b), find(c)
+        parent[rb] = ra
+        parent[find(rc)] = ra
+    roots = np.array([find(f[0]) for f in faces])
+    return [tris[roots == r] for r in np.unique(roots)]
+
+
+def obstacle_boxes(robot_cell, robot_cell_state, only_touching=False, group=None, static=None) -> dict:
     """Static rigid bodies as oriented bounding boxes, in robot coordinates (scene JSON).
 
     With ``only_touching``, only bodies that declare touch links (e.g. a floor); the rest
     then go into the ESDF (see ``exact_obstacle_meshes(..., without_touching=True)``).
+    Links that ``group`` cannot move are included like rigid bodies (``static``: their
+    ``static_link_obstacles``, if already computed).
     """
     base = robot_cell_state.robot_base_frame or Frame.worldXY()
     t_rcf = np.linalg.inv(np.array(Transformation.from_frame(base).matrix))
@@ -366,24 +485,47 @@ def obstacle_boxes(robot_cell, robot_cell_state, only_touching=False) -> dict:
         pts = np.concatenate([np.asarray(m.to_vertices_and_faces()[0], dtype=float) for m in meshes])
         pts = pts @ t_world[:3, :3].T + t_world[:3, 3]
         pts = pts @ t_rcf[:3, :3].T + t_rcf[:3, 3]
-        box = oriented_box(body_id, pts)
+        box = oriented_box(body_id, pts, axes=t_rcf[:3, :3] @ t_world[:3, :3])
         box["touch_links"] = list(body_state.touch_links or [])
+        cuboids.append(box)
+    if static is None:
+        static = static_link_obstacles(robot_cell, robot_cell_state, group)
+    for name, tris, touch in static:
+        if only_touching and not touch:
+            continue
+        box = oriented_box(name, tris.reshape(-1, 3))
+        box["touch_links"] = touch
         cuboids.append(box)
     return {"cuboids": cuboids}
 
 
-def oriented_box(name, points):
-    """Oriented bounding box from the principal axes of the points (conservative)."""
+def oriented_box(name, points, axes=None):
+    """Smallest of a few bounding boxes of the points (all conservative).
+
+    The candidates are the points' principal axes, the coordinate axes and ``axes`` (a
+    rotation matrix, e.g. the rigid body's own frame). Principal axes alone are not enough:
+    for a cube (or any shape with equal variances) they are arbitrary, and the box around
+    a cube can come out up to sqrt(3) times its size.
+    """
     center = points.mean(axis=0)
     _, _, vt = np.linalg.svd(points - center, full_matrices=False)
-    axes = vt.T
-    if np.linalg.det(axes) < 0:
-        axes[:, 2] *= -1
-    local = (points - center) @ axes
-    lo, hi = local.min(axis=0), local.max(axis=0)
-    mid = center + axes @ ((lo + hi) / 2)
+    candidates = [vt.T, np.eye(3)]
+    if axes is not None:
+        candidates.append(np.asarray(axes, dtype=float))
+    best = None
+    for rot in candidates:
+        rot = rot.copy()
+        if np.linalg.det(rot) < 0:
+            rot[:, 2] *= -1
+        local = (points - center) @ rot
+        lo, hi = local.min(axis=0), local.max(axis=0)
+        volume = float(np.prod(hi - lo + 1e-9))
+        if best is None or volume < best[0] - 1e-12:
+            best = (volume, rot, lo, hi)
+    _, rot, lo, hi = best
+    mid = center + rot @ ((lo + hi) / 2)
     frame = np.eye(4)
-    frame[:3, :3] = axes
+    frame[:3, :3] = rot
     frame[:3, 3] = mid
     return {"name": name, "frame": frame[:3, :].reshape(-1).tolist(), "half_extents": ((hi - lo) / 2 + 1e-6).tolist()}
 
@@ -403,10 +545,13 @@ def mesh_payload(tris):
 def exact_robot_meshes(robot_cell, robot_cell_state=None, group=None) -> dict:
     """Collision meshes per link (link coordinates), attached tools merged into the end-effector link."""
     group = group or robot_cell.main_group_name
-    ordered = topological_links(robot_cell.robot_model)
+    ordered, static = planning_links(robot_cell, group)
+    static = {link.name for link in static}
     names = [link.name for link, _, _ in ordered]
     per_link = {}
     for i, (link, _, _) in enumerate(ordered):
+        if link.name in static:
+            continue
         tris = meshes_to_triangles(collision_items(link.collision))
         if len(tris):
             per_link[i] = tris
@@ -423,8 +568,9 @@ def exact_robot_meshes(robot_cell, robot_cell_state=None, group=None) -> dict:
     return {"links": [dict(link=i, **mesh_payload(tris)) for i, tris in sorted(per_link.items())]}
 
 
-def exact_obstacle_meshes(robot_cell, robot_cell_state, without_touching=False) -> dict:
-    """Static rigid bodies as meshes in robot coordinates, with their touch links."""
+def exact_obstacle_meshes(robot_cell, robot_cell_state, without_touching=False, group=None, static=None) -> dict:
+    """Static rigid bodies, and links ``group`` cannot move, as meshes in robot
+    coordinates, with their touch links."""
     base = robot_cell_state.robot_base_frame or Frame.worldXY()
     t_rcf = np.linalg.inv(np.array(Transformation.from_frame(base).matrix))
     obstacles = []
@@ -440,4 +586,10 @@ def exact_obstacle_meshes(robot_cell, robot_cell_state, without_touching=False) 
         t = t_rcf @ np.array(Transformation.from_frame(body_state.frame).matrix)
         tris = meshes_to_triangles([(m, t, [1.0, 1.0, 1.0]) for m in meshes])
         obstacles.append(dict(name=body_id, touch_links=list(body_state.touch_links or []), **mesh_payload(tris)))
+    if static is None:
+        static = static_link_obstacles(robot_cell, robot_cell_state, group)
+    for name, tris, touch in static:
+        if without_touching and touch:
+            continue
+        obstacles.append(dict(name=name, touch_links=touch, **mesh_payload(tris)))
     return {"obstacles": obstacles}

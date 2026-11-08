@@ -1,5 +1,6 @@
 """NativePlanner (spike) against compas_fab's own kinematics. Skipped without the extension."""
 
+import json
 import math
 
 import pytest
@@ -335,3 +336,65 @@ def test_plan_motion_is_timed_within_the_joint_limits(ur5_wall):
     # Without timing: the path's vertices only.
     vertices = planner.plan_motion(ConfigurationTarget(goal), start, options={"time_parameterization": False})
     assert len(vertices.points) < len(trajectory.points)
+
+
+def test_a_tilted_cube_gets_a_tight_box():
+    """Principal axes are arbitrary for a cube; the body's own frame gives the tight box."""
+    from compas_fab.backends.native.model import obstacle_boxes
+
+    cell, state = RobotCellLibrary.ur5()
+    cell.rigid_body_models["cube"] = RigidBody.from_mesh(Box(0.3, 0.3, 0.3).to_mesh(triangulated=True))
+    frame = Frame([0.5, 0.2, 0.4], [0.8, 0.6, 0.0], [-0.36, 0.48, 0.8])
+    state.rigid_body_states["cube"] = RigidBodyState(frame)
+    (box,) = obstacle_boxes(cell, state)["cuboids"]
+    assert max(box["half_extents"]) < 0.15 + 1e-4
+
+
+def test_changing_touch_links_reaches_the_core():
+    cell, state = RobotCellLibrary.ur5()
+    cell.rigid_body_models["box"] = RigidBody.from_mesh(Box(0.2, 0.2, 0.2).to_mesh(triangulated=True))
+    state.robot_configuration = cell.zero_configuration()
+    tool0 = cell.robot_model.forward_kinematics(state.robot_configuration, "tool0")
+    state.rigid_body_states["box"] = RigidBodyState(Frame(tool0.point, [1, 0, 0], [0, 1, 0]))
+    planner = NativePlanner(UR5Kinematics())
+    planner.set_robot_cell(cell, state)
+    core = planner.client.core
+    before = core.clearance([state.robot_configuration.joint_values])[0]
+    assert before < 0
+    # Only the touch links change: the state's frames and attachments stay the same.
+    state.rigid_body_states["box"].touch_links = [link.name for link in cell.robot_model.links]
+    planner.set_robot_cell_state(state)
+    assert core.clearance([state.robot_configuration.joint_values])[0] > before
+
+
+def test_multi_robot_cell_plans_one_gantry_robot():
+    """The RFL has 44 links, more than the core takes. Planning robot 11 on its gantry, the
+    links it cannot move (the other bridge and its robots, the rails, the hall) become
+    obstacles, and the robot 12 on the same bridge rides along."""
+    cell, state = RobotCellLibrary.rfl()
+    group = "robot11_eaXYZ"
+    planner = NativePlanner()
+    planner.set_robot_cell(cell, state, options={"group": group})
+    core = planner.client.core
+    assert len(core.link_names) <= 32
+    assert "robot21_link_3" not in core.link_names and "robot12_link_3" in core.link_names
+    names = {c["name"] for c in json.loads(planner._scene_json(state))["cuboids"]}
+    assert "link:robot21_link_3" in names and "link:bridge2" in names
+
+    values = dict(zip(state.robot_configuration.joint_names, state.robot_configuration.joint_values))
+    q = [values[n] for n in core.joint_names]
+    q[0], q[1], q[2] = 3.0, -2.0, -3.2  # gantry X, Y, Z
+    q[4], q[5], q[7] = 0.3, 0.4, 0.9
+    frames = core.link_frames(q)
+    full = state.robot_configuration.copy()
+    full.joint_values = [dict(zip(core.joint_names, q)).get(n, v) for n, v in zip(full.joint_names, full.joint_values)]
+    for link in ["robot11_tool0", "robot12_link_6"]:
+        expected = cell.robot_model.forward_kinematics(full, link)
+        got = frames[core.link_names.index(link)]
+        assert max(abs(got[3] - expected.point.x), abs(got[7] - expected.point.y), abs(got[11] - expected.point.z)) < 1e-6, link
+
+    start = [values[n] for n in core.joint_names]
+    start[0], start[1], start[2], start[4], start[5], start[7] = 2.0, -1.2, -3.3, 0.2, 0.5, 0.85
+    assert core.clearance([start, q])[0] > 0 and core.clearance([start, q])[1] > 0
+    path, _ = core.plan_motion(start, [q], exact=core.has_exact)
+    assert len(path) >= 2
