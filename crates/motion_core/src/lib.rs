@@ -1,6 +1,7 @@
 //! Native motion core, Phase 0 spike: batched kinematics and the sphere
 //! distance query on the CPU, plus the buffer layouts shared with the GPU.
 
+pub mod cartesian;
 pub mod cpu;
 pub mod ik;
 pub mod layout;
