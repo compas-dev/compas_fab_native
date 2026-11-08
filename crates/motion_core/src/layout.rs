@@ -114,6 +114,9 @@ pub struct ModelBuffers {
     /// Index pairs into `self_spheres` checked for self-collision: spheres on different
     /// links whose link pair is not disabled in the SRDF.
     pub self_pairs: Vec<[u32; 2]>,
+    /// Optional ESDF obstacles (CPU kernels only) and the margin subtracted from them.
+    pub esdf: Option<std::sync::Arc<crate::esdf::VoxelEsdf>>,
+    pub esdf_margin: f32,
 }
 
 /// Upper bound on spheres per robot in the CPU lanes kernel (world-sphere scratch).
@@ -195,6 +198,8 @@ impl ModelBuffers {
             cuboids,
             self_spheres,
             self_pairs,
+            esdf: scene.esdf.clone(),
+            esdf_margin: scene.esdf_margin,
         }
     }
 

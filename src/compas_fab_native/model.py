@@ -340,13 +340,19 @@ def add_attached_tools(description, robot_cell, robot_cell_state, group, seed=0,
     return description
 
 
-def obstacle_boxes(robot_cell, robot_cell_state) -> dict:
-    """Static rigid bodies as oriented bounding boxes, in robot coordinates (scene JSON)."""
+def obstacle_boxes(robot_cell, robot_cell_state, only_touching=False) -> dict:
+    """Static rigid bodies as oriented bounding boxes, in robot coordinates (scene JSON).
+
+    With ``only_touching``, only bodies that declare touch links (e.g. a floor); the rest
+    then go into the ESDF (see ``exact_obstacle_meshes(..., without_touching=True)``).
+    """
     base = robot_cell_state.robot_base_frame or Frame.worldXY()
     t_rcf = np.linalg.inv(np.array(Transformation.from_frame(base).matrix))
     cuboids = []
     for body_id, body_state in robot_cell_state.rigid_body_states.items():
         if body_state.is_hidden or body_state.attached_to_link or body_state.attached_to_tool:
+            continue
+        if only_touching and not body_state.touch_links:
             continue
         body = robot_cell.rigid_body_models[body_id]
         meshes = body.collision_meshes_in_meters or body.visual_meshes_in_meters
@@ -413,13 +419,15 @@ def exact_robot_meshes(robot_cell, robot_cell_state=None, group=None) -> dict:
     return {"links": [dict(link=i, **mesh_payload(tris)) for i, tris in sorted(per_link.items())]}
 
 
-def exact_obstacle_meshes(robot_cell, robot_cell_state) -> dict:
+def exact_obstacle_meshes(robot_cell, robot_cell_state, without_touching=False) -> dict:
     """Static rigid bodies as meshes in robot coordinates, with their touch links."""
     base = robot_cell_state.robot_base_frame or Frame.worldXY()
     t_rcf = np.linalg.inv(np.array(Transformation.from_frame(base).matrix))
     obstacles = []
     for body_id, body_state in robot_cell_state.rigid_body_states.items():
         if body_state.is_hidden or body_state.attached_to_link or body_state.attached_to_tool or body_state.frame is None:
+            continue
+        if without_touching and body_state.touch_links:
             continue
         body = robot_cell.rigid_body_models[body_id]
         meshes = body.collision_meshes_in_meters or body.visual_meshes_in_meters

@@ -282,3 +282,84 @@ impl ExactChecker {
 pub fn compose(a: &Mat34, b: &Mat34) -> Mat34 {
     mul(a, b)
 }
+
+// ---------------------------------------------------------------------------
+// Offline ESDF from meshes
+
+/// Signed distance field of obstacle meshes (robot coordinates) in the sparse block layout.
+/// Blocks whose centre is farther than `truncation` + half a block diagonal from every mesh
+/// are skipped. Inside is negative (meshes must be closed for the sign to be meaningful).
+pub fn build_esdf(
+    json: &str,
+    voxel: f32,
+    truncation: f32,
+) -> Result<motion_core::esdf::VoxelEsdf, String> {
+    use motion_core::layout::{VOXELS_PER_BLOCK, VOXEL_BLOCK_DIM};
+    use parry3d::bounding_volume::BoundingVolume;
+    use rayon::prelude::*;
+
+    let parsed: ObstacleMeshesJson = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    let bodies: Vec<Body> = parsed
+        .obstacles
+        .iter()
+        .map(trimesh_body)
+        .collect::<Result<_, _>>()?;
+    let mut esdf = motion_core::esdf::VoxelEsdf::new(voxel, truncation);
+    if bodies.is_empty() {
+        return Ok(esdf);
+    }
+    let mut aabb = bodies[0].shape.compute_local_aabb();
+    for b in &bodies[1..] {
+        aabb.merge(&b.shape.compute_local_aabb());
+    }
+    let dim = VOXEL_BLOCK_DIM as i32;
+    let block = voxel * dim as f32;
+    let lo = (aabb.mins - Vec3::splat(truncation)) / block;
+    let hi = (aabb.maxs + Vec3::splat(truncation)) / block;
+    let (lo, hi) = (lo.floor().as_ivec3(), hi.ceil().as_ivec3());
+    let signed = |p: Vec3| -> f32 {
+        bodies
+            .iter()
+            .map(|b| {
+                let proj = b.shape.project_local_point(p, b.solid);
+                let d = (proj.point - p).length();
+                if proj.is_inside && b.solid {
+                    -d
+                } else {
+                    d
+                }
+            })
+            .fold(f32::INFINITY, f32::min)
+    };
+    let half_diag = 0.5 * block * 3f32.sqrt();
+    let coords: Vec<[i32; 3]> = (lo.x..hi.x)
+        .flat_map(|x| (lo.y..hi.y).flat_map(move |y| (lo.z..hi.z).map(move |z| [x, y, z])))
+        .collect();
+    let blocks: Vec<([i32; 3], Vec<f32>)> = coords
+        .par_iter()
+        .filter_map(|&c| {
+            let centre = Vec3::new(c[0] as f32 + 0.5, c[1] as f32 + 0.5, c[2] as f32 + 0.5) * block;
+            if signed(centre).abs() > truncation + half_diag {
+                return None;
+            }
+            let mut d = vec![0.0f32; VOXELS_PER_BLOCK as usize];
+            for z in 0..dim {
+                for y in 0..dim {
+                    for x in 0..dim {
+                        let g = Vec3::new(
+                            (c[0] * dim + x) as f32,
+                            (c[1] * dim + y) as f32,
+                            (c[2] * dim + z) as f32,
+                        );
+                        d[(x + dim * (y + dim * z)) as usize] = signed(g * voxel).min(truncation);
+                    }
+                }
+            }
+            Some((c, d))
+        })
+        .collect();
+    for (c, d) in blocks {
+        esdf.insert_block(c, &d);
+    }
+    Ok(esdf)
+}

@@ -132,6 +132,10 @@ pub struct Scene {
     /// Per obstacle sphere (same order as `RobotModel::spheres`): bit `k` set means the sphere
     /// may touch cuboid `k` (see `auto_touch_spheres`). Empty = no exemptions.
     pub sphere_touch: Vec<u32>,
+    /// Obstacles as a signed distance field (e.g. CAD meshes), in addition to the boxes.
+    pub esdf: Option<std::sync::Arc<crate::esdf::VoxelEsdf>>,
+    /// Subtracted from ESDF distances (interpolation error allowance), metres.
+    pub esdf_margin: f32,
 }
 
 impl Scene {
@@ -394,6 +398,8 @@ pub fn load_scene(json: &str) -> Result<Scene, String> {
     Ok(Scene {
         cuboids,
         sphere_touch: Vec::new(),
+        esdf: None,
+        esdf_margin: 0.0,
     })
 }
 

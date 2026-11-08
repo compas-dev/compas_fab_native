@@ -94,14 +94,31 @@ class NativePlanner(
         Keep the exact collision meshes in the core. Planned Cartesian paths are then
         validated on the meshes (parry3d) after the sphere search, and the search continues
         until the path is collision-free under both models. Default True.
+    obstacles
+        How the sphere search sees static rigid bodies: ``"boxes"`` (oriented bounding boxes,
+        default) or ``"esdf"`` (a signed distance field of their meshes; bodies with touch
+        links, like a floor, stay boxes).
+    esdf_options
+        ``voxel`` (0.02 m), ``truncation`` (0.3 m) and ``margin`` (0.01 m) of the ESDF.
     """
 
-    def __init__(self, kinematics_solver=None, sphere_options: Optional[dict] = None, exact: bool = True):
+    def __init__(
+        self,
+        kinematics_solver=None,
+        sphere_options: Optional[dict] = None,
+        exact: bool = True,
+        obstacles: str = "boxes",
+        esdf_options: Optional[dict] = None,
+    ):
         super(NativePlanner, self).__init__()
         self._client = NativeClient()
         self.kinematics_solver = kinematics_solver
         self.sphere_options = sphere_options or {}
         self.exact = exact
+        if obstacles not in ("boxes", "esdf"):
+            raise ValueError("obstacles must be 'boxes' or 'esdf'")
+        self.obstacles = obstacles
+        self.esdf_options = esdf_options or {}
         self._robot_description = None
 
     # -- SetRobotCell / SetRobotCellState ---------------------------------------------
@@ -128,8 +145,8 @@ class NativePlanner(
         if client.core is None or tool_key != client._tool_key:
             description = json.loads(json.dumps(self._robot_description))
             add_attached_tools(description, client.robot_cell, robot_cell_state, client.group, sphere_options=self.sphere_options)
-            scene = json.dumps(obstacle_boxes(client.robot_cell, robot_cell_state))
-            client.core = _native().NativeCore(json.dumps(description), scene)
+            client.core = _native().NativeCore(json.dumps(description), self._scene_json(robot_cell_state))
+            self._update_esdf(robot_cell_state)
             if self.exact:
                 client.core.set_exact_meshes(
                     json.dumps(exact_robot_meshes(client.robot_cell, robot_cell_state, client.group)),
@@ -137,10 +154,21 @@ class NativePlanner(
                 )
             client._tool_key, client._scene_key = tool_key, scene_key
         elif scene_key != client._scene_key:
-            client.core.set_scene(json.dumps(obstacle_boxes(client.robot_cell, robot_cell_state)))
+            client.core.set_scene(self._scene_json(robot_cell_state))
+            self._update_esdf(robot_cell_state)
             if self.exact:
                 client.core.set_exact_obstacles(json.dumps(exact_obstacle_meshes(client.robot_cell, robot_cell_state)))
             client._scene_key = scene_key
+
+    def _scene_json(self, robot_cell_state):
+        boxes = obstacle_boxes(self.client.robot_cell, robot_cell_state, only_touching=self.obstacles == "esdf")
+        return json.dumps(boxes)
+
+    def _update_esdf(self, robot_cell_state):
+        if self.obstacles != "esdf":
+            return
+        meshes = exact_obstacle_meshes(self.client.robot_cell, robot_cell_state, without_touching=True)
+        self.esdf_stats = self.client.core.set_esdf_obstacles(json.dumps(meshes), **self.esdf_options)
 
     def _sync_state(self, robot_cell_state):
         """Bring obstacles and tools up to date with ``robot_cell_state`` (cheap if unchanged)."""

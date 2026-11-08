@@ -197,6 +197,13 @@ fn query_one(
                 best_g = g;
             }
         }
+        if let Some(esdf) = &model.esdf {
+            let (d, g) = esdf.sample(p);
+            if d - model.esdf_margin < best {
+                best = d - model.esdf_margin;
+                best_g = g;
+            }
+        }
         let d = best - sphere.radius;
         min = min.min(d);
         write(s, d, best_g);
@@ -365,6 +372,18 @@ fn spheres_lanes(
             best_g[0][l] = if closer { wx } else { best_g[0][l] };
             best_g[1][l] = if closer { wy } else { best_g[1][l] };
             best_g[2][l] = if closer { wz } else { best_g[2][l] };
+        }
+    }
+    if let Some(esdf) = &model.esdf {
+        for l in 0..LANES {
+            let (d, g) = esdf.sample([p[0][l], p[1][l], p[2][l]]);
+            let d = d - model.esdf_margin;
+            if d < best[l] {
+                best[l] = d;
+                best_g[0][l] = g[0];
+                best_g[1][l] = g[1];
+                best_g[2][l] = g[2];
+            }
         }
     }
     (p, best, best_g)

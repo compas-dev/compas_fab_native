@@ -147,3 +147,29 @@ def test_spherical_wrist_robots_without_a_solver(factory):
     frames = [Frame([reach, -0.2 + 0.4 * i / 29, height], [1, 0, 0], [0, -1, 0]) for i in range(30)]
     trajectory = planner.plan_cartesian_motion(FrameWaypoints(frames, TargetMode.ROBOT), state, options={"free_axis_samples": 8})
     assert len(trajectory.points) == len(frames)
+
+
+def test_esdf_obstacles_keep_holes_open():
+    """A ring's bounding box fills its hole; its ESDF does not."""
+    from compas.geometry import Torus
+
+    from compas_fab.backends.kinematics.exceptions import CartesianMotionError
+
+    cell, _ = RobotCellLibrary.ur5()
+    cell.rigid_body_models["ring"] = RigidBody.from_mesh(Torus(0.22, 0.025).to_mesh(u=48, v=12, triangulated=True))
+    state = cell.default_cell_state()
+    state.rigid_body_states["ring"] = RigidBodyState(Frame([0.45, 0.0, 0.45], [1, 0, 0], [0, 1, 0]))
+    # Plunge the flange from above into the ring.
+    frames = [Frame([0.45, 0.0, 0.65 - 0.23 * i / 29], [1, 0, 0], [0, -1, 0]) for i in range(30)]
+    waypoints = FrameWaypoints(frames, TargetMode.ROBOT)
+
+    boxes = NativePlanner(UR5Kinematics(), obstacles="boxes")
+    boxes.set_robot_cell(cell, state)
+    with pytest.raises(CartesianMotionError):
+        boxes.plan_cartesian_motion(waypoints, state, options={"free_axis_samples": 12})
+
+    esdf = NativePlanner(UR5Kinematics(), obstacles="esdf")
+    esdf.set_robot_cell(cell, state)
+    trajectory = esdf.plan_cartesian_motion(waypoints, state, options={"free_axis_samples": 12})
+    assert len(trajectory.points) == len(frames)
+    assert all(c is None for c in esdf.client.core.exact_check([p.joint_values for p in trajectory.points]))

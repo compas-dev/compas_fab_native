@@ -42,11 +42,16 @@ struct NativeCore {
     auto_disable_samples: usize,
     auto_touch: Vec<(String, String, usize)>,
     exact: Option<ExactChecker>,
+    esdf: Option<(std::sync::Arc<motion_core::esdf::VoxelEsdf>, f32)>,
 }
 
 impl NativeCore {
     fn load_scene(&mut self, scene_json: &str) -> PyResult<()> {
         let mut scene = load_scene(scene_json).map_err(PyValueError::new_err)?;
+        if let Some((esdf, margin)) = &self.esdf {
+            scene.esdf = Some(esdf.clone());
+            scene.esdf_margin = *margin;
+        }
         self.auto_touch = if self.auto_disable_samples > 0 {
             scene.auto_touch_spheres(&self.model, self.auto_disable_samples, 0.95, 8)
         } else {
@@ -78,6 +83,7 @@ impl NativeCore {
             auto_disable_samples,
             auto_touch: Vec::new(),
             exact: None,
+            esdf: None,
         };
         core.load_scene(scene_json)?;
         Ok(core)
@@ -172,6 +178,29 @@ impl NativeCore {
             .map_err(PyValueError::new_err)?;
         self.exact = Some(checker);
         Ok(())
+    }
+
+    /// Obstacle meshes (robot coordinates) as a signed distance field for the sphere search,
+    /// in addition to the boxes of the scene. Returns (blocks, seconds to build).
+    #[pyo3(signature = (obstacle_meshes_json, voxel = 0.02, truncation = 0.3, margin = 0.01))]
+    fn set_esdf_obstacles(
+        &mut self,
+        py: Python<'_>,
+        obstacle_meshes_json: &str,
+        voxel: f32,
+        truncation: f32,
+        margin: f32,
+    ) -> PyResult<(usize, f64)> {
+        let t = std::time::Instant::now();
+        let esdf = py
+            .detach(|| motion_exact::build_esdf(obstacle_meshes_json, voxel, truncation))
+            .map_err(PyValueError::new_err)?;
+        let blocks = esdf.n_blocks();
+        self.esdf = Some((std::sync::Arc::new(esdf), margin));
+        self.scene.esdf = self.esdf.as_ref().map(|(e, _)| e.clone());
+        self.scene.esdf_margin = margin;
+        self.buffers = ModelBuffers::new(&self.model, &self.scene);
+        Ok((blocks, t.elapsed().as_secs_f64()))
     }
 
     /// Replace the obstacle meshes of the exact checker.

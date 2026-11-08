@@ -278,6 +278,26 @@ collision-free on the exact meshes.
 - Answers part of a PRD open question: parry3d is good enough for the exact CPU pass; the
   hot path stays on spheres, so writing our own mesh kernels is not needed for Phase 1.
 
+### Offline ESDF for non-box obstacles
+
+`motion_core::esdf`: the voxel-block layout from Phase 0, now exercised. 8³ grid points
+per block, a hash from block coordinates to pool slots, trilinear distance and gradient;
+missing blocks read as the truncation distance. `motion_exact::build_esdf` fills it from
+obstacle meshes with parry3d (signed distance, blocks far from every surface skipped,
+parallel per block). The CPU kernels query it next to the boxes. GPU kernels don't yet.
+
+- Accuracy (4 boxes as meshes, 2 cm grid, 0.3 m band): median error 0, p99 3.8 mm, max
+  10 mm (bound: half the voxel diagonal, 17 mm). 1,853 blocks, 3.8 MB, built in 55 ms.
+- Collision verdicts vs exact boxes, 4,096 configs: 1 miss without margin; 0 misses and 178
+  extra with a half-diagonal margin. The backend uses a 1 cm margin and relies on the exact
+  pass for the rest.
+- Cost: 2.5 ms per 4,096 configurations against 0.85 ms for four analytic boxes (hash
+  lookups), but independent of how complex the geometry is.
+- `NativePlanner(obstacles="esdf")` puts static rigid bodies into the ESDF (bodies with
+  touch links, like a floor, stay boxes, since the field merges all bodies). A tool plunging
+  into a ring (R = 22 cm): **boxes fail (the ring's bounding box fills the hole), the ESDF
+  plans it in 6.6 ms**, exact-collision-free; the ring's ESDF builds in 12 ms.
+
 ### NativePlanner (compas_fab backend)
 
 `compas_fab.backends.native.NativePlanner(UR5Kinematics())` implements
@@ -291,15 +311,15 @@ suite is unaffected (195 passed, 22 skipped).
 ## Open issues and next steps
 
 - The exact pass covers Cartesian planning; IK uses the sphere model plus
-  `check_collision(..., {"exact": True})` on request. Mesh obstacles are exact in the final
-  pass but still oriented boxes in the sphere search (a BVH/ESDF query is Phase 1 work).
+  `check_collision(..., {"exact": True})` on request.
+- ESDF: per-obstacle touch semantics (one field per body, or a body id per voxel), GPU
+  query (the layout is GPU-ready), and building from sensed data (Phase 3).
 - **compas_fab bug:** `AnalyticalPyBulletPlanner.plan_cartesian_motion` /
   `AnalyticalKinematicsPlanner.plan_cartesian_motion` with frame waypoints always raise
   `BackendTargetNotSupportedError`, and the tests that would catch it are commented out.
   Fixed with regression tests on the local branch `fix/analytical-cartesian-frame-targets`
   (off `main`, not pushed).
 - External axes, 7-DoF redundancy sampling.
-- Obstacles beyond boxes: meshes (BVH) and the offline ESDF (voxel layout is defined).
 - Attached workpieces are ignored by the backend; tools are supported.
 - Explicit SIMD on the CPU (finding 4); the self-collision pair loop is now the largest
   CPU cost (1,984 pairs for the UR5).

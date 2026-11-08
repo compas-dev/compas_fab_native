@@ -153,6 +153,13 @@ pub fn distance_query(model: &RobotModel, scene: &Scene, q: &[f64]) -> Query {
                 best = (d, g);
             }
         }
+        if let Some(esdf) = &scene.esdf {
+            let (d, g) = esdf.sample([c[0] as f32, c[1] as f32, c[2] as f32]);
+            let d = (d - scene.esdf_margin) as f64;
+            if d < best.0 {
+                best = (d, g.map(|v| v as f64));
+            }
+        }
         dist.push(best.0 - s.radius);
         grad.push(best.1);
     }

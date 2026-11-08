@@ -3,6 +3,7 @@
 
 pub mod cartesian;
 pub mod cpu;
+pub mod esdf;
 pub mod ik;
 pub mod layout;
 pub mod model;
