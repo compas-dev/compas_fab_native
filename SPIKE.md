@@ -240,20 +240,42 @@ Through the API, half of the first version's 10 ms went to compas_fab's
 `Target.normalized_to_meters` (deep-copies all waypoints even at scale 1) and a
 determinant-based matrix inverse per waypoint; both are avoided now.
 
+### Exact final pass (parry3d)
+
+`motion_exact`: the robot's collision meshes per link (attached tools merged into the
+end-effector link) and the obstacles' meshes, checked with parry3d (BVH mesh-mesh
+intersection plus a point-in-mesh test for containment), honouring SRDF disabled pairs and
+touch links. It is part of the planner's lazy loop, not just a post-check: once a path
+passes the sphere checks, its nodes and interpolated edges are checked exactly (in
+parallel); failing nodes/edges are blocked and the search is repeated. Results are
+collision-free on the exact meshes.
+
+- Agrees with an independent exact check (trimesh signed distance on 1,500 surface samples
+  per link) on 177 of 181 disputed configurations; in the other 4 parry finds real
+  grazing surface intersections at the wrist that the sampling missed.
+- ~200 µs per configuration single-threaded (UR5, 4,985 triangles, 4 boxes), vs ~1 µs for
+  the sphere query: right for a final pass, not for search.
+- Cartesian line, 100 waypoints, through the compas_fab API: **2.9 ms with the exact pass**
+  (1.3 ms of it exact checks), 1.6 ms without. Still ~100× compas_fab's fixed analytical
+  planner, now with a stronger guarantee (exact meshes rather than PyBullet's convex hulls).
+- Answers part of a PRD open question: parry3d is good enough for the exact CPU pass; the
+  hot path stays on spheres, so writing our own mesh kernels is not needed for Phase 1.
+
 ### NativePlanner (compas_fab backend)
 
 `compas_fab.backends.native.NativePlanner(UR5Kinematics())` implements
 `set_robot_cell(_state)`, `forward_kinematics`, `iter_inverse_kinematics`,
 `check_collision` and `plan_cartesian_motion` (`TargetMode.ROBOT` and `TOOL`, option
-`free_axis_samples`). Tests (`tests/backends/native`) check FK against compas_robots
-(with a moved robot base), IK round trips, collisions with a box, and Cartesian paths in
-robot and tool mode (UR5 with the cone tool, free axis). The rest of the compas_fab
+`free_axis_samples`, `exact_check`). Tests (`tests/backends/native`) check FK against
+compas_robots (with a moved robot base), IK round trips, collisions with a box, Cartesian
+paths in robot and tool mode (UR5 with the cone tool, free axis), and the exact pass. The rest of the compas_fab
 suite is unaffected (195 passed, 22 skipped).
 
 ## Open issues and next steps
 
-- **Exact-mesh final pass** on planned paths (PRD mitigation) — needed before anyone
-  executes a native plan; the sphere model misses a few contacts per thousand.
+- The exact pass covers Cartesian planning; IK uses the sphere model plus
+  `check_collision(..., {"exact": True})` on request. Mesh obstacles are exact in the final
+  pass but still oriented boxes in the sphere search (a BVH/ESDF query is Phase 1 work).
 - **compas_fab bug:** `AnalyticalPyBulletPlanner.plan_cartesian_motion` /
   `AnalyticalKinematicsPlanner.plan_cartesian_motion` with frame waypoints always raise
   `BackendTargetNotSupportedError` (wrap frames in `FrameTarget`), and the tests that

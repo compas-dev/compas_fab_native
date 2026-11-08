@@ -7,10 +7,13 @@
 use std::collections::HashMap;
 use std::f64::consts::PI;
 
-use motion_core::cartesian::{check_configs, plan_cartesian, CartesianError, CartesianRequest};
+use motion_core::cartesian::{
+    check_configs, plan_cartesian_with, CartesianError, CartesianRequest, Config,
+};
 use motion_core::model::Mat34;
 use motion_core::reference::forward_kinematics;
 use motion_core::{load_robot, load_scene, ModelBuffers, RobotModel, Scene};
+use motion_exact::ExactChecker;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
@@ -38,6 +41,7 @@ struct NativeCore {
     buffers: ModelBuffers,
     auto_disable_samples: usize,
     auto_touch: Vec<(String, String, usize)>,
+    exact: Option<ExactChecker>,
 }
 
 impl NativeCore {
@@ -73,6 +77,7 @@ impl NativeCore {
             buffers,
             auto_disable_samples,
             auto_touch: Vec::new(),
+            exact: None,
         };
         core.load_scene(scene_json)?;
         Ok(core)
@@ -153,6 +158,56 @@ impl NativeCore {
             .collect())
     }
 
+    /// Enable the exact final pass: collision meshes per link (link coordinates) and obstacle
+    /// meshes (robot coordinates), as produced by `compas_fab.backends.native.model`.
+    fn set_exact_meshes(
+        &mut self,
+        robot_meshes_json: &str,
+        obstacle_meshes_json: &str,
+    ) -> PyResult<()> {
+        let mut checker = ExactChecker::new(self.model.clone(), robot_meshes_json)
+            .map_err(PyValueError::new_err)?;
+        checker
+            .set_obstacle_meshes(obstacle_meshes_json)
+            .map_err(PyValueError::new_err)?;
+        self.exact = Some(checker);
+        Ok(())
+    }
+
+    /// Replace the obstacle meshes of the exact checker.
+    fn set_exact_obstacles(&mut self, obstacle_meshes_json: &str) -> PyResult<()> {
+        match self.exact.as_mut() {
+            Some(c) => c
+                .set_obstacle_meshes(obstacle_meshes_json)
+                .map_err(PyValueError::new_err),
+            None => Err(PyRuntimeError::new_err("exact meshes not set")),
+        }
+    }
+
+    #[getter]
+    fn has_exact(&self) -> bool {
+        self.exact.is_some()
+    }
+
+    /// Exact collision of each configuration: None, or the colliding pair (names).
+    fn exact_check(
+        &self,
+        py: Python<'_>,
+        configs: Vec<Vec<f64>>,
+    ) -> PyResult<Vec<Option<(String, String)>>> {
+        let checker = self
+            .exact
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("exact meshes not set"))?;
+        Ok(py.detach(|| {
+            checker
+                .check_many(&configs)
+                .into_iter()
+                .map(|c| c.map(|c| (c.a, c.b)))
+                .collect()
+        }))
+    }
+
     /// Clearance (metres; negative = collision) of each configuration against the scene and itself.
     fn clearance(&self, py: Python<'_>, configs: Vec<Vec<f64>>) -> PyResult<Vec<f32>> {
         let configs: Vec<[f64; 6]> = configs.iter().map(|c| config(c)).collect::<PyResult<_>>()?;
@@ -169,6 +224,7 @@ impl NativeCore {
         max_joint_step = 0.5,
         edge_check_step = 0.05,
         margin = 0.0,
+        exact = true,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn plan_cartesian(
@@ -182,6 +238,7 @@ impl NativeCore {
         max_joint_step: f64,
         edge_check_step: f64,
         margin: f32,
+        exact: bool,
     ) -> PyResult<CartesianOutput> {
         let req = CartesianRequest {
             waypoints: waypoints
@@ -202,7 +259,19 @@ impl NativeCore {
         if self.model.analytic_ik.is_none() {
             return Err(PyRuntimeError::new_err("no closed-form IK for this robot"));
         }
-        let result = py.detach(|| plan_cartesian(&self.model, &self.buffers, &req));
+        let checker = if exact { self.exact.as_ref() } else { None };
+        let validator = checker.map(|c| {
+            move |configs: &[Config]| -> Vec<bool> {
+                let qs: Vec<Vec<f64>> = configs.iter().map(|q| q.to_vec()).collect();
+                c.check_many(&qs).into_iter().map(|r| r.is_some()).collect()
+            }
+        });
+        let result = py.detach(|| {
+            let v = validator
+                .as_ref()
+                .map(|f| f as &(dyn Fn(&[Config]) -> Vec<bool> + Sync));
+            plan_cartesian_with(&self.model, &self.buffers, &req, v)
+        });
         match result {
             Ok(r) => {
                 let s = r.stats;
@@ -216,6 +285,9 @@ impl NativeCore {
                     ("seconds_node_checks".to_string(), s.t_node_checks.as_secs_f64()),
                     ("seconds_search".to_string(), s.t_search.as_secs_f64()),
                     ("seconds_edge_checks".to_string(), s.t_edge_checks.as_secs_f64()),
+                    ("exact_configs_checked".to_string(), s.exact_configs_checked as f64),
+                    ("exact_rejections".to_string(), s.exact_rejections as f64),
+                    ("seconds_exact".to_string(), s.t_exact.as_secs_f64()),
                     ("seconds_total".to_string(), s.t_total.as_secs_f64()),
                 ]);
                 Ok((r.path.iter().map(|q| q.to_vec()).collect(), r.cost, stats))

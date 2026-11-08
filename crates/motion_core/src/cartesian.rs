@@ -59,10 +59,13 @@ pub struct CartesianStats {
     pub edges_evaluated: usize,
     pub edge_configs_checked: usize,
     pub search_rounds: usize,
+    pub exact_configs_checked: usize,
+    pub exact_rejections: usize,
     pub t_ik: Duration,
     pub t_node_checks: Duration,
     pub t_search: Duration,
     pub t_edge_checks: Duration,
+    pub t_exact: Duration,
     pub t_total: Duration,
 }
 
@@ -125,10 +128,25 @@ pub fn check_configs(buffers: &ModelBuffers, configs: &[Config]) -> Vec<f32> {
     out
 }
 
+/// Exact collision check used as the final pass: one flag (true = collision) per configuration.
+pub type ExactValidator<'a> = &'a (dyn Fn(&[Config]) -> Vec<bool> + Sync);
+
 pub fn plan_cartesian(
     model: &RobotModel,
     buffers: &ModelBuffers,
     req: &CartesianRequest,
+) -> Result<CartesianResult, CartesianError> {
+    plan_cartesian_with(model, buffers, req, None)
+}
+
+/// As [`plan_cartesian`], with an exact validator: once a path passes the sphere checks, its
+/// nodes and interpolated edges are checked exactly; failing nodes and edges are blocked and
+/// the search is repeated, so the result is collision-free under the exact model too.
+pub fn plan_cartesian_with(
+    model: &RobotModel,
+    buffers: &ModelBuffers,
+    req: &CartesianRequest,
+    exact: Option<ExactValidator>,
 ) -> Result<CartesianResult, CartesianError> {
     let t0 = Instant::now();
     let mut stats = CartesianStats::default();
@@ -209,17 +227,32 @@ pub fn plan_cartesian(
         Some((cost, moved))
     };
     let mut blocked: HashSet<(usize, usize, usize)> = HashSet::new();
+    let mut blocked_nodes: HashSet<(usize, usize)> = HashSet::new();
     loop {
         stats.search_rounds += 1;
         let ts = Instant::now();
         // best[i][n] = (cost, predecessor, configuration as reached)
-        let mut best: Vec<Vec<(f64, usize, Config)>> =
-            vec![layers[0].iter().map(|q| (0.0, usize::MAX, *q)).collect()];
+        let mut best: Vec<Vec<(f64, usize, Config)>> = vec![layers[0]
+            .iter()
+            .enumerate()
+            .map(|(n, q)| {
+                let cost = if blocked_nodes.contains(&(0, n)) {
+                    f64::INFINITY
+                } else {
+                    0.0
+                };
+                (cost, usize::MAX, *q)
+            })
+            .collect()];
         for i in 1..layers.len() {
             let prev = &best[i - 1];
             let mut cur = Vec::with_capacity(layers[i].len());
             for (n, node) in layers[i].iter().enumerate() {
                 let mut entry = (f64::INFINITY, usize::MAX, *node);
+                if blocked_nodes.contains(&(i, n)) {
+                    cur.push(entry);
+                    continue;
+                }
                 for (m, (pc, _, pq)) in prev.iter().enumerate() {
                     if !pc.is_finite() || blocked.contains(&(i, m, n)) {
                         continue;
@@ -284,8 +317,37 @@ pub fn plan_cartesian(
         bad.dedup();
         stats.t_edge_checks += te.elapsed();
         if bad.is_empty() {
-            stats.t_total = t0.elapsed();
-            return Ok(CartesianResult { path, cost, stats });
+            let Some(exact) = exact else {
+                stats.t_total = t0.elapsed();
+                return Ok(CartesianResult { path, cost, stats });
+            };
+            // Final pass on the exact model: path nodes, then the same interpolated edges.
+            let tx = Instant::now();
+            let mut configs = path.clone();
+            configs.extend_from_slice(&interp);
+            let hits = exact(&configs);
+            stats.exact_configs_checked += configs.len();
+            stats.t_exact += tx.elapsed();
+            let mut rejected = false;
+            for (i, &hit) in hits[..path.len()].iter().enumerate() {
+                if hit {
+                    blocked_nodes.insert((i, idx[i]));
+                    rejected = true;
+                }
+            }
+            for (k, &hit) in hits[path.len()..].iter().enumerate() {
+                if hit {
+                    let i = owner[k];
+                    blocked.insert((i, idx[i - 1], idx[i]));
+                    rejected = true;
+                }
+            }
+            if !rejected {
+                stats.t_total = t0.elapsed();
+                return Ok(CartesianResult { path, cost, stats });
+            }
+            stats.exact_rejections += 1;
+            continue;
         }
         for i in bad {
             blocked.insert((i, idx[i - 1], idx[i]));

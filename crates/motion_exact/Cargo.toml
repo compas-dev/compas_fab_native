@@ -1,0 +1,13 @@
+[package]
+name = "motion_exact"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+motion_core.workspace = true
+parry3d = "=0.31.1"
+serde.workspace = true
+serde_json.workspace = true
+rayon.workspace = true

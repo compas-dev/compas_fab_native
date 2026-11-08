@@ -39,6 +39,8 @@ from compas_fab.robots import JointTrajectoryPoint
 from compas_fab.robots import TargetMode
 
 from .model import add_attached_tools
+from .model import exact_obstacle_meshes
+from .model import exact_robot_meshes
 from .model import frame_to_3x4
 from .model import matrix_from_3x4
 from .model import obstacle_boxes
@@ -88,13 +90,18 @@ class NativePlanner(
         are handed to the core's closed-form IK.
     sphere_options
         Sphere fitting options (see ``model.fit_sphere_sets``).
+    exact
+        Keep the exact collision meshes in the core. Planned Cartesian paths are then
+        validated on the meshes (parry3d) after the sphere search, and the search continues
+        until the path is collision-free under both models. Default True.
     """
 
-    def __init__(self, kinematics_solver=None, sphere_options: Optional[dict] = None):
+    def __init__(self, kinematics_solver=None, sphere_options: Optional[dict] = None, exact: bool = True):
         super(NativePlanner, self).__init__()
         self._client = NativeClient()
         self.kinematics_solver = kinematics_solver
         self.sphere_options = sphere_options or {}
+        self.exact = exact
         self._robot_description = None
 
     # -- SetRobotCell / SetRobotCellState ---------------------------------------------
@@ -123,9 +130,16 @@ class NativePlanner(
             add_attached_tools(description, client.robot_cell, robot_cell_state, client.group, sphere_options=self.sphere_options)
             scene = json.dumps(obstacle_boxes(client.robot_cell, robot_cell_state))
             client.core = _native().NativeCore(json.dumps(description), scene)
+            if self.exact:
+                client.core.set_exact_meshes(
+                    json.dumps(exact_robot_meshes(client.robot_cell, robot_cell_state, client.group)),
+                    json.dumps(exact_obstacle_meshes(client.robot_cell, robot_cell_state)),
+                )
             client._tool_key, client._scene_key = tool_key, scene_key
         elif scene_key != client._scene_key:
             client.core.set_scene(json.dumps(obstacle_boxes(client.robot_cell, robot_cell_state)))
+            if self.exact:
+                client.core.set_exact_obstacles(json.dumps(exact_obstacle_meshes(client.robot_cell, robot_cell_state)))
             client._scene_key = scene_key
 
     def _sync_state(self, robot_cell_state):
@@ -202,9 +216,17 @@ class NativePlanner(
     # -- CheckCollision -----------------------------------------------------------------------
 
     def check_collision(self, robot_cell_state, options=None):
+        """Collision check on the sphere model, or on the exact meshes with ``options["exact"]``."""
+        options = options or {}
         client: NativeClient = self.client
         self._sync_state(robot_cell_state)
-        clearance = client.core.clearance([self._group_values(robot_cell_state.robot_configuration)])[0]
+        q = self._group_values(robot_cell_state.robot_configuration)
+        if options.get("exact", False):
+            contact = client.core.exact_check([q])[0]
+            if contact is not None:
+                raise CollisionCheckError("Collision (exact meshes) between {} and {}".format(*contact))
+            return
+        clearance = client.core.clearance([q])[0]
         if clearance <= 0:
             raise CollisionCheckError("Collision (sphere model): penetration {:.4f} m".format(-clearance))
 
@@ -223,6 +245,8 @@ class NativePlanner(
             Largest joint change between consecutive waypoints (rad). Default 0.5.
         start_from_state : bool
             Begin the path at ``start_state``'s configuration. Default False (any IK branch).
+        exact_check : bool
+            Validate the path on the exact meshes (needs ``NativePlanner(exact=True)``). Default True.
         """
         options = options or {}
         client: NativeClient = self.client
@@ -255,6 +279,7 @@ class NativePlanner(
                 start=start,
                 max_joint_step=float(options.get("max_joint_step", 0.5)),
                 edge_check_step=float(options.get("edge_check_step", 0.05)),
+                exact=bool(options.get("exact_check", True)) and client.core.has_exact,
             )
         except RuntimeError as e:
             error = CartesianMotionError()

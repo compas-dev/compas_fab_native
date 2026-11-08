@@ -105,3 +105,21 @@ def test_cartesian_tool_mode_with_free_axis():
     bare = NativePlanner(UR5Kinematics())
     bare.set_robot_cell(*RobotCellLibrary.ur5())
     assert sphere_counts[0] > bare.client.core.sphere_counts[0]
+
+
+def test_exact_final_pass_and_exact_check(ur5):
+    planner, cell, state = ur5
+    assert planner.client.core.has_exact
+    frames = [Frame([0.45, -0.3 + 0.6 * i / 49, 0.4], [1, 0, 0], [0, -1, 0]) for i in range(50)]
+    trajectory = planner.plan_cartesian_motion(FrameWaypoints(frames, TargetMode.ROBOT), state.copy())
+    stats = trajectory.attributes["native_stats"]
+    assert stats["exact_configs_checked"] >= len(frames)
+    # Every configuration of the result is free on the exact meshes too.
+    contacts = planner.client.core.exact_check([p.joint_values for p in trajectory.points])
+    assert all(c is None for c in contacts)
+    # A folded configuration that self-collides on the meshes is reported by the exact check.
+    folded = state.copy()
+    folded.robot_configuration = cell.zero_configuration()
+    folded.robot_configuration.joint_values = [0.0, -1.57, 2.9, 0.0, 0.0, 0.0]
+    with pytest.raises(CollisionCheckError):
+        planner.check_collision(folded, {"exact": True})

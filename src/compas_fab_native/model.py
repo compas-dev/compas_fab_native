@@ -364,3 +364,56 @@ def oriented_box(name, points):
     frame[:3, :3] = axes
     frame[:3, 3] = mid
     return {"name": name, "frame": frame[:3, :].reshape(-1).tolist(), "half_extents": ((hi - lo) / 2 + 1e-6).tolist()}
+
+
+# ---------------------------------------------------------------------------
+# Exact geometry, for the final collision pass on planned paths
+
+
+def mesh_payload(tris):
+    """Indexed mesh {"vertices": [...], "faces": [...]} from triangles, vertices welded."""
+    verts, inverse = np.unique(np.round(tris.reshape(-1, 3), 9), axis=0, return_inverse=True)
+    faces = inverse.reshape(-1, 3)
+    faces = faces[(faces[:, 0] != faces[:, 1]) & (faces[:, 1] != faces[:, 2]) & (faces[:, 0] != faces[:, 2])]
+    return {"vertices": verts.reshape(-1).tolist(), "faces": faces.reshape(-1).astype(int).tolist()}
+
+
+def exact_robot_meshes(robot_cell, robot_cell_state=None, group=None) -> dict:
+    """Collision meshes per link (link coordinates), attached tools merged into the end-effector link."""
+    group = group or robot_cell.main_group_name
+    ordered = topological_links(robot_cell.robot_model)
+    names = [link.name for link, _, _ in ordered]
+    per_link = {}
+    for i, (link, _, _) in enumerate(ordered):
+        tris = meshes_to_triangles(collision_items(link.collision))
+        if len(tris):
+            per_link[i] = tris
+    if robot_cell_state is not None:
+        ee = names.index(robot_cell.get_end_effector_link_name(group))
+        for tool_id, tool_state in robot_cell_state.tool_states.items():
+            if tool_state.attached_to_group != group or tool_state.is_hidden:
+                continue
+            tris = tool_triangles(robot_cell.tool_models[tool_id], tool_state.configuration)
+            if len(tris):
+                t = np.array(Transformation.from_frame(tool_state.attachment_frame or Frame.worldXY()).matrix)
+                tris = tris @ t[:3, :3].T + t[:3, 3]
+                per_link[ee] = np.concatenate([per_link[ee], tris]) if ee in per_link else tris
+    return {"links": [dict(link=i, **mesh_payload(tris)) for i, tris in sorted(per_link.items())]}
+
+
+def exact_obstacle_meshes(robot_cell, robot_cell_state) -> dict:
+    """Static rigid bodies as meshes in robot coordinates, with their touch links."""
+    base = robot_cell_state.robot_base_frame or Frame.worldXY()
+    t_rcf = np.linalg.inv(np.array(Transformation.from_frame(base).matrix))
+    obstacles = []
+    for body_id, body_state in robot_cell_state.rigid_body_states.items():
+        if body_state.is_hidden or body_state.attached_to_link or body_state.attached_to_tool or body_state.frame is None:
+            continue
+        body = robot_cell.rigid_body_models[body_id]
+        meshes = body.collision_meshes_in_meters or body.visual_meshes_in_meters
+        if not meshes:
+            continue
+        t = t_rcf @ np.array(Transformation.from_frame(body_state.frame).matrix)
+        tris = meshes_to_triangles([(m, t, [1.0, 1.0, 1.0]) for m in meshes])
+        obstacles.append(dict(name=body_id, touch_links=list(body_state.touch_links or []), **mesh_payload(tris)))
+    return {"obstacles": obstacles}
