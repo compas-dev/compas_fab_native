@@ -16,7 +16,8 @@
 
 use std::time::{Duration, Instant};
 
-use crate::check::{v, Checker, LANES, V};
+use crate::check::Checker;
+use crate::simd::{v, LANES, V};
 
 #[derive(Clone, Debug)]
 pub struct FreeSpaceSettings {

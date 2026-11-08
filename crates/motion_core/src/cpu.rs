@@ -5,9 +5,8 @@
 //!
 //! * [`query_scalar`]: one configuration at a time, line-for-line the same
 //!   arithmetic as the WGSL kernel. This is the oracle for the GPU path.
-//! * [`query_lanes`]: `LANES` configurations at a time, every value held as
-//!   `[f32; LANES]`, so the inner loops are straight-line lane loops that LLVM
-//!   turns into SIMD (NEON on Apple Silicon, AVX on x86) without intrinsics.
+//! * [`query_lanes`]: `LANES` configurations at a time in explicit SIMD (`crate::simd`;
+//!   an earlier `[f32; LANES]` version relied on auto-vectorization, which LLVM did not do).
 //!
 //! Both parallelize over configurations with rayon.
 
@@ -15,10 +14,12 @@
 
 use rayon::prelude::*;
 
+use std::mem::MaybeUninit;
+
 use crate::layout::{GpuCuboid, GpuLink, GpuSphere, ModelBuffers, MAX_LINKS, MAX_SPHERES};
 use crate::model::JointType;
-
-pub const LANES: usize = 8;
+pub use crate::simd::LANES;
+use crate::simd::{compose, dist_sq, to_world, v, M, V};
 
 /// Outputs of a distance query for a batch, in the shared batch layout.
 pub struct BatchOutput {
@@ -233,87 +234,15 @@ pub fn query_scalar(model: &ModelBuffers, q: &[f32], out: &mut BatchOutput) {
 }
 
 // ---------------------------------------------------------------------------
-// Lanes: LANES configurations at once
+// Lanes: LANES configurations at once, in explicit SIMD (`crate::simd`)
 
-pub(crate) type L = [f32; LANES];
-
+/// Distance from a sphere center (world, per lane) to the nearest box it may not touch, and
+/// the world gradient of that distance; then the ESDF, if any.
 #[inline(always)]
-pub(crate) fn splat(v: f32) -> L {
-    [v; LANES]
-}
-
-#[inline(always)]
-pub(crate) fn mul34_lanes(a: &[L; 12], b: &[L; 12]) -> [L; 12] {
-    let mut m = [splat(0.0); 12];
-    for r in 0..3 {
-        for c in 0..4 {
-            for l in 0..LANES {
-                let mut v = a[r * 4][l] * b[c][l]
-                    + a[r * 4 + 1][l] * b[4 + c][l]
-                    + a[r * 4 + 2][l] * b[8 + c][l];
-                if c == 3 {
-                    v += a[r * 4 + 3][l];
-                }
-                m[r * 4 + c][l] = v;
-            }
-        }
-    }
-    m
-}
-
-#[inline(always)]
-pub(crate) fn local_transform_lanes(link: &GpuLink, q: &L) -> [L; 12] {
-    let o = link.origin.map(splat);
-    match JointType::from_u32(link.joint_type) {
-        JointType::Fixed => o,
-        JointType::Prismatic => {
-            let [x, y, z] = link.axis;
-            let mut m = o;
-            for l in 0..LANES {
-                let v = q[l];
-                m[3][l] += (o[0][l] * x + o[1][l] * y + o[2][l] * z) * v;
-                m[7][l] += (o[4][l] * x + o[5][l] * y + o[6][l] * z) * v;
-                m[11][l] += (o[8][l] * x + o[9][l] * y + o[10][l] * z) * v;
-            }
-            m
-        }
-        JointType::Revolute => {
-            let [x, y, z] = link.axis;
-            let mut r = [splat(0.0); 12];
-            for l in 0..LANES {
-                let (s, c) = q[l].sin_cos();
-                let t = 1.0 - c;
-                r[0][l] = t * x * x + c;
-                r[1][l] = t * x * y - s * z;
-                r[2][l] = t * x * z + s * y;
-                r[4][l] = t * x * y + s * z;
-                r[5][l] = t * y * y + c;
-                r[6][l] = t * y * z - s * x;
-                r[8][l] = t * x * z - s * y;
-                r[9][l] = t * y * z + s * x;
-                r[10][l] = t * z * z + c;
-            }
-            mul34_lanes(&o, &r)
-        }
-    }
-}
-
-#[inline(always)]
-fn spheres_lanes(
-    model: &ModelBuffers,
-    frames: &[[L; 12]],
-    sphere: &GpuSphere,
-) -> ([L; 3], L, [L; 3]) {
-    let m = &frames[sphere.link as usize];
-    let c = sphere.center;
-    let mut p = [splat(0.0); 3];
-    for l in 0..LANES {
-        p[0][l] = m[0][l] * c[0] + m[1][l] * c[1] + m[2][l] * c[2] + m[3][l];
-        p[1][l] = m[4][l] * c[0] + m[5][l] * c[1] + m[6][l] * c[2] + m[7][l];
-        p[2][l] = m[8][l] * c[0] + m[9][l] * c[1] + m[10][l] * c[2] + m[11][l];
-    }
-    let mut best = splat(f32::INFINITY);
-    let mut best_g = [splat(0.0); 3];
+fn env_distance(model: &ModelBuffers, sphere: &GpuSphere, p: &[V; 3]) -> (V, [V; 3]) {
+    let mut best = v(f32::INFINITY);
+    let mut best_g = [v(0.0); 3];
+    let (zero, one) = (v(0.0), v(1.0));
     for (k, b) in model.cuboids.iter().enumerate() {
         if b.touch_mask & (1 << sphere.link) != 0 || (k < 32 && sphere.touch_boxes & (1 << k) != 0)
         {
@@ -321,72 +250,56 @@ fn spheres_lanes(
         }
         let m = &b.inv;
         let h = b.half_extents;
-        for l in 0..LANES {
-            let lx = m[0] * p[0][l] + m[1] * p[1][l] + m[2] * p[2][l] + m[3];
-            let ly = m[4] * p[0][l] + m[5] * p[1][l] + m[6] * p[2][l] + m[7];
-            let lz = m[8] * p[0][l] + m[9] * p[1][l] + m[10] * p[2][l] + m[11];
-            let qx = lx.abs() - h[0];
-            let qy = ly.abs() - h[1];
-            let qz = lz.abs() - h[2];
-            let ox = qx.max(0.0);
-            let oy = qy.max(0.0);
-            let oz = qz.max(0.0);
-            let outside = (ox * ox + oy * oy + oz * oz).sqrt();
-            let inside = qx.max(qy).max(qz).min(0.0);
-            let d = outside + inside;
-            let sx = if lx < 0.0 { -1.0 } else { 1.0 };
-            let sy = if ly < 0.0 { -1.0 } else { 1.0 };
-            let sz = if lz < 0.0 { -1.0 } else { 1.0 };
-            // Branch-free gradient selection so the lane loop stays vectorizable.
-            let is_out = outside > 0.0;
-            let inv_len = if is_out { 1.0 / outside } else { 0.0 };
-            let ax = qx >= qy && qx >= qz;
-            let ay = !ax && qy >= qz;
-            let az = !ax && !ay;
-            let gx = if is_out {
-                sx * ox * inv_len
-            } else if ax {
-                sx
-            } else {
-                0.0
-            };
-            let gy = if is_out {
-                sy * oy * inv_len
-            } else if ay {
-                sy
-            } else {
-                0.0
-            };
-            let gz = if is_out {
-                sz * oz * inv_len
-            } else if az {
-                sz
-            } else {
-                0.0
-            };
-            let wx = m[0] * gx + m[4] * gy + m[8] * gz;
-            let wy = m[1] * gx + m[5] * gy + m[9] * gz;
-            let wz = m[2] * gx + m[6] * gy + m[10] * gz;
-            let closer = d < best[l];
-            best[l] = if closer { d } else { best[l] };
-            best_g[0][l] = if closer { wx } else { best_g[0][l] };
-            best_g[1][l] = if closer { wy } else { best_g[1][l] };
-            best_g[2][l] = if closer { wz } else { best_g[2][l] };
+        let l: [V; 3] = std::array::from_fn(|r| {
+            v(m[r * 4]).mul_add(
+                p[0],
+                v(m[r * 4 + 1]).mul_add(p[1], v(m[r * 4 + 2]).mul_add(p[2], v(m[r * 4 + 3]))),
+            )
+        });
+        let q: [V; 3] = std::array::from_fn(|k| l[k].abs() - v(h[k]));
+        let o: [V; 3] = q.map(|x| x.max(zero));
+        let outside = o[0].mul_add(o[0], o[1].mul_add(o[1], o[2] * o[2])).sqrt();
+        let inside = q[0].max(q[1]).max(q[2]).min(zero);
+        let d = outside + inside;
+        let sign: [V; 3] = l.map(|x| x.simd_lt(zero).select(-one, one));
+        // Outside: along the offset to the box; inside: along the axis of the nearest face.
+        let is_out = outside.simd_gt(zero);
+        let inv_len = is_out.select(one / outside, zero);
+        let ax = q[0].simd_ge(q[1]) & q[0].simd_ge(q[2]);
+        let ay = q[1].simd_ge(q[2]);
+        let face = [
+            ax.select(sign[0], zero),
+            ax.select(zero, ay.select(sign[1], zero)),
+            ax.select(zero, ay.select(zero, sign[2])),
+        ];
+        let g: [V; 3] = std::array::from_fn(|k| is_out.select(sign[k] * o[k] * inv_len, face[k]));
+        // World gradient = R_box * g = inv_rot^T * g.
+        let gw: [V; 3] = std::array::from_fn(|c| {
+            v(m[c]).mul_add(g[0], v(m[4 + c]).mul_add(g[1], v(m[8 + c]) * g[2]))
+        });
+        let closer = d.simd_lt(best);
+        best = closer.select(d, best);
+        for c in 0..3 {
+            best_g[c] = closer.select(gw[c], best_g[c]);
         }
     }
     if let Some(esdf) = &model.esdf {
+        let (x, y, z) = (p[0].to_array(), p[1].to_array(), p[2].to_array());
+        let (mut b, mut g) = (best.to_array(), best_g.map(|c| c.to_array()));
         for l in 0..LANES {
-            let (d, g) = esdf.sample([p[0][l], p[1][l], p[2][l]]);
+            let (d, grad) = esdf.sample([x[l], y[l], z[l]]);
             let d = d - model.esdf_margin;
-            if d < best[l] {
-                best[l] = d;
-                best_g[0][l] = g[0];
-                best_g[1][l] = g[1];
-                best_g[2][l] = g[2];
+            if d < b[l] {
+                b[l] = d;
+                for c in 0..3 {
+                    g[c][l] = grad[c];
+                }
             }
         }
+        best = V::new(b);
+        best_g = g.map(V::new);
     }
-    (p, best, best_g)
+    (best, best_g)
 }
 
 /// Fused batched query, `LANES` configurations per iteration. Batch must be a multiple of `LANES`.
@@ -432,58 +345,60 @@ fn lanes_impl<const PER_SPHERE: bool, const SELF: bool>(
             #[allow(clippy::redundant_locals)]
             let ptr = ptr;
             let b0 = chunk * LANES;
-            let mut frames = [[splat(0.0); 12]; MAX_LINKS];
+            let mut frames = [const { MaybeUninit::<M>::uninit() }; MAX_LINKS];
             for (i, link) in model.links.iter().enumerate() {
-                let mut value = splat(0.0);
-                if link.q_index >= 0 {
+                let value = if link.q_index >= 0 {
                     let base = link.q_index as usize * batch + b0;
-                    value.copy_from_slice(&q[base..base + LANES]);
-                }
-                let local = local_transform_lanes(link, &value);
-                frames[i] = if link.parent < 0 {
-                    local
+                    V::new(q[base..base + LANES].try_into().unwrap())
                 } else {
-                    mul34_lanes(&frames[link.parent as usize], &local)
+                    v(0.0)
                 };
+                let frame = if link.parent < 0 {
+                    crate::simd::local_transform(link, value)
+                } else {
+                    // Parents come before children, so the parent frame is initialized.
+                    let p = unsafe { frames[link.parent as usize].assume_init_ref() };
+                    compose(|k| p[k], link, value)
+                };
+                frames[i].write(frame);
             }
-            let mut min = splat(f32::INFINITY);
+            // Every link frame was written above.
+            let frame = |l: u32| unsafe { frames[l as usize].assume_init_ref() };
+            let mut min = v(f32::INFINITY);
             for (s, sphere) in model.spheres.iter().enumerate() {
-                let (_, best, g) = spheres_lanes(model, &frames[..model.links.len()], sphere);
-                for l in 0..LANES {
-                    let d = best[l] - sphere.radius;
-                    min[l] = min[l].min(d);
-                    if PER_SPHERE {
+                let p = to_world(frame(sphere.link), sphere.center);
+                let (best, g) = env_distance(model, sphere, &p);
+                let d = best - v(sphere.radius);
+                min = min.min(d);
+                if PER_SPHERE {
+                    let (d, g) = (d.to_array(), g.map(|c| c.to_array()));
+                    for l in 0..LANES {
                         unsafe {
-                            *ptr.dist.add(s * batch + b0 + l) = d;
+                            *ptr.dist.add(s * batch + b0 + l) = d[l];
                             *ptr.grad.add(s * batch + b0 + l) = [g[0][l], g[1][l], g[2][l], 0.0];
                         }
                     }
                 }
             }
             if SELF {
-                let mut world = [[splat(0.0); 3]; MAX_SPHERES];
-                for (s, sphere) in model.self_spheres.iter().enumerate() {
-                    let m = &frames[sphere.link as usize];
-                    let c = sphere.center;
-                    for l in 0..LANES {
-                        world[s][0][l] = m[0][l] * c[0] + m[1][l] * c[1] + m[2][l] * c[2] + m[3][l];
-                        world[s][1][l] = m[4][l] * c[0] + m[5][l] * c[1] + m[6][l] * c[2] + m[7][l];
-                        world[s][2][l] =
-                            m[8][l] * c[0] + m[9][l] * c[1] + m[10][l] * c[2] + m[11][l];
-                    }
+                let mut world = [const { MaybeUninit::<[V; 3]>::uninit() }; MAX_SPHERES];
+                for (w, sphere) in world.iter_mut().zip(&model.self_spheres) {
+                    w.write(to_world(frame(sphere.link), sphere.center));
                 }
                 for &[i, j] in &model.self_pairs {
-                    let (a, b) = (&world[i as usize], &world[j as usize]);
+                    // Every self sphere's position was written above.
+                    let (a, b) = unsafe {
+                        (
+                            world[i as usize].assume_init_ref(),
+                            world[j as usize].assume_init_ref(),
+                        )
+                    };
                     let r = model.self_spheres[i as usize].radius
                         + model.self_spheres[j as usize].radius;
-                    for l in 0..LANES {
-                        let dx = a[0][l] - b[0][l];
-                        let dy = a[1][l] - b[1][l];
-                        let dz = a[2][l] - b[2][l];
-                        min[l] = min[l].min((dx * dx + dy * dy + dz * dz).sqrt() - r);
-                    }
+                    min = min.min(dist_sq(a, *b).sqrt() - v(r));
                 }
             }
+            let min = min.to_array();
             for l in 0..LANES {
                 unsafe { *ptr.min.add(b0 + l) = min[l] };
             }
