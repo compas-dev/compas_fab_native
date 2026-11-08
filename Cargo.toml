@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = ["crates/motion_core", "crates/motion_gpu", "crates/motion_bench"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+motion_core = { path = "crates/motion_core" }
+motion_gpu = { path = "crates/motion_gpu" }
+bytemuck = { version = "=1.25.2", features = ["derive"] }
+pollster = "=1.0.1"
+rayon = "=1.12.0"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+wgpu = "=30.0.1"
+
+[profile.release]
+debug = 1
+codegen-units = 1
+lto = "thin"

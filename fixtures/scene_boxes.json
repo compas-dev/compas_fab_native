@@ -1,0 +1,9 @@
+{
+ "description": "Obstacles around a robot at the origin: a table in front, a column to the side, a beam overhead and a wall behind. Box frames are 3x4 row-major (rotation | translation), half extents in metres.",
+ "cuboids": [
+  {"name": "table",  "frame": [1,0,0, 0.60, 0,1,0, 0.00, 0,0,1, 0.20], "half_extents": [0.30, 0.50, 0.20]},
+  {"name": "column", "frame": [1,0,0, 0.00, 0,1,0, 0.55, 0,0,1, 0.60], "half_extents": [0.10, 0.10, 0.60]},
+  {"name": "beam",   "frame": [0.7071,-0.7071,0, 0.10, 0.7071,0.7071,0, -0.10, 0,0,1, 1.05], "half_extents": [0.80, 0.08, 0.06]},
+  {"name": "wall",   "frame": [1,0,0, -0.55, 0,1,0, 0.00, 0,0,1, 0.60], "half_extents": [0.05, 0.80, 0.60]}
+ ]
+}
