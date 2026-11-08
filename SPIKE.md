@@ -177,7 +177,24 @@ the `tool0` frame and solutions are model joint values wrapped into the limits.
   fixed or dropped). The source configuration is recovered for every target except at
   wrist singularities (sin q5 ≈ 0), where q4 + q6 is all that is determined and IK
   returns other valid configurations.
-- Spherical-wrist arms (ABB, Stäubli) are not ported yet.
+- **Spherical-wrist arms are solved from the model itself**, not ported: product of
+  exponentials over the zero-configuration joint axes plus Paden–Kahan subproblems
+  (joint 1 from the arm-plane offset, joints 2–3 from subproblems 3 and 1, the wrist from
+  subproblems 2 and 1). No per-robot parameters or joint conventions, unlike compas_fab's
+  Lobster-based solver with its per-robot pre/post-processing. Used automatically when no
+  solver is given and the geometry qualifies (axes 4–6 meet within 0.1 mm).
+
+| robot | targets | solutions | worst FK residual | source recovered |
+|---|---|---|---|---|
+| UR5 (ported closed form) | 2000 | 14,376 | 6e-10 | 2000 |
+| ABB IRB4600-40/2.55 (from model) | 2000 | 9,332 | 1.3e-10 | 2000 |
+| Stäubli TX2-60L (from model) | 2000 | 12,935 | 6e-14 | 2000 |
+
+  (Fewer than 8 solutions per target where joint limits cut branches. "Recovered" accepts
+  any solution at wrist singularities and within 10 mrad at a stretched elbow, where such
+  configurations reach the same pose to 1e-10.) The polish is Levenberg–Marquardt: plain
+  damped Newton did not converge at the ABB's elbow singularity, where its wrist axes
+  missing each other by 1.6 µm leave the closed form a few µm off.
 
 ### Self-collision and the sphere model
 
@@ -278,9 +295,10 @@ suite is unaffected (195 passed, 22 skipped).
   pass but still oriented boxes in the sphere search (a BVH/ESDF query is Phase 1 work).
 - **compas_fab bug:** `AnalyticalPyBulletPlanner.plan_cartesian_motion` /
   `AnalyticalKinematicsPlanner.plan_cartesian_motion` with frame waypoints always raise
-  `BackendTargetNotSupportedError` (wrap frames in `FrameTarget`), and the tests that
-  would catch it are commented out. Worth fixing on `main` independently of this spike.
-- Spherical-wrist IK (ABB, Stäubli), external axes, 7-DoF redundancy sampling.
+  `BackendTargetNotSupportedError`, and the tests that would catch it are commented out.
+  Fixed with regression tests on the local branch `fix/analytical-cartesian-frame-targets`
+  (off `main`, not pushed).
+- External axes, 7-DoF redundancy sampling.
 - Obstacles beyond boxes: meshes (BVH) and the offline ESDF (voxel layout is defined).
 - Attached workpieces are ignored by the backend; tools are supported.
 - Explicit SIMD on the CPU (finding 4); the self-collision pair loop is now the largest
