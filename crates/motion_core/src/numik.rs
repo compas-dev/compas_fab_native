@@ -29,6 +29,8 @@ use crate::reference::{forward_kinematics, mul, point_box_distance, transform_po
 use crate::sampling::Rng;
 
 type V3 = [f64; 3];
+/// Self-collision sphere pairs `(i, j)` between links `a` and `b`: `(a, b, pairs)`.
+type SelfGroup = (usize, usize, Vec<(usize, usize)>);
 
 #[derive(Clone, Debug)]
 pub struct IkGoal {
@@ -94,20 +96,38 @@ struct Driver {
     prismatic: bool,
 }
 
-/// What a solve needs from the model and the scene, precomputed once.
-pub struct Solver<'a> {
-    model: &'a RobotModel,
-    scene: &'a Scene,
+/// What a solve needs from the model and the scene, precomputed once (keep it while the
+/// model and the scene stay the same; see `Solver::with_data`).
+pub struct SolverData {
     /// Per link, the driven joints between the root and it.
     drivers: Vec<Vec<Driver>>,
     /// Per obstacle sphere, the boxes it is exempt from (touch links and auto exemptions).
     exempt: Vec<Vec<bool>>,
-    /// Self-collision sphere pairs that are checked.
-    self_pairs: Vec<(usize, usize)>,
+    /// Self-collision sphere pairs that are checked, grouped by link pair
+    /// `(link a, link b, pairs)`, so far-apart links are skipped as a whole.
+    self_groups: Vec<SelfGroup>,
+    /// Per link: bounding sphere of its self spheres (centre in link coordinates, radius).
+    self_bounds: Vec<Option<(V3, f64)>>,
+    /// Per box: centre (world) and the radius of its bounding sphere.
+    box_bounds: Vec<(V3, f64)>,
     /// Per joint: scale of the rest residual (1 rad for revolute, the travel for prismatic).
     rest_scale: Vec<f64>,
     /// Per joint: prismatic (an external axis or a linear stage).
     prismatic: Vec<bool>,
+}
+
+/// Numerical IK on a model and a scene.
+pub struct Solver<'a> {
+    model: &'a RobotModel,
+    scene: &'a Scene,
+    data: std::sync::Arc<SolverData>,
+}
+
+impl std::ops::Deref for Solver<'_> {
+    type Target = SolverData;
+    fn deref(&self) -> &SolverData {
+        &self.data
+    }
 }
 
 /// Normal equations of the stacked residuals at one configuration.
@@ -226,8 +246,8 @@ fn solve_dense(mut a: Vec<f64>, mut b: Vec<f64>, n: usize) -> Option<Vec<f64>> {
     Some(x)
 }
 
-impl<'a> Solver<'a> {
-    pub fn new(model: &'a RobotModel, scene: &'a Scene) -> Self {
+impl SolverData {
+    pub fn new(model: &RobotModel, scene: &Scene) -> Self {
         let mut drivers: Vec<Vec<Driver>> = Vec::with_capacity(model.links.len());
         for (i, l) in model.links.iter().enumerate() {
             let mut d = if l.parent >= 0 {
@@ -280,16 +300,48 @@ impl<'a> Solver<'a> {
             drivers[a].len() == drivers[b].len()
                 && drivers[a].iter().zip(&drivers[b]).all(|(x, y)| x.q == y.q)
         };
-        let mut self_pairs = Vec::new();
         let ss = &model.self_spheres;
+        let mut by_pair: std::collections::BTreeMap<(usize, usize), Vec<(usize, usize)>> =
+            Default::default();
         for i in 0..ss.len() {
             for j in i + 1..ss.len() {
                 let (a, b) = (ss[i].link as usize, ss[j].link as usize);
                 if a != b && !disabled[a * n_links + b] && !rigid(a, b) {
-                    self_pairs.push((i, j));
+                    by_pair
+                        .entry((a.min(b), a.max(b)))
+                        .or_default()
+                        .push((i, j));
                 }
             }
         }
+        let self_groups = by_pair.into_iter().map(|((a, b), p)| (a, b, p)).collect();
+        // Bounding sphere per link: centroid of its sphere centres, radius to cover all.
+        let self_bounds = (0..n_links)
+            .map(|l| {
+                let mine: Vec<_> = ss.iter().filter(|s| s.link as usize == l).collect();
+                if mine.is_empty() {
+                    return None;
+                }
+                let n = mine.len() as f64;
+                let c = mine.iter().fold([0.0; 3], |a, s| {
+                    [
+                        a[0] + s.center[0] / n,
+                        a[1] + s.center[1] / n,
+                        a[2] + s.center[2] / n,
+                    ]
+                });
+                let r = mine
+                    .iter()
+                    .map(|s| norm(sub(s.center, c)) + s.radius)
+                    .fold(0.0, f64::max);
+                Some((c, r))
+            })
+            .collect();
+        let box_bounds = scene
+            .cuboids
+            .iter()
+            .map(|b| (origin(&b.frame), norm(b.half_extents)))
+            .collect();
         let mut rest_scale = vec![1.0; model.dof()];
         let mut prismatic = vec![false; model.dof()];
         for l in &model.links {
@@ -301,14 +353,33 @@ impl<'a> Solver<'a> {
             }
         }
         Self {
-            model,
-            scene,
             drivers,
             exempt,
-            self_pairs,
+            self_groups,
+            self_bounds,
+            box_bounds,
             rest_scale,
             prismatic,
         }
+    }
+}
+
+impl<'a> Solver<'a> {
+    pub fn new(model: &'a RobotModel, scene: &'a Scene) -> Self {
+        Self::with_data(
+            model,
+            scene,
+            std::sync::Arc::new(SolverData::new(model, scene)),
+        )
+    }
+
+    /// A solver on precomputed data, which must have been built from this model and scene.
+    pub fn with_data(
+        model: &'a RobotModel,
+        scene: &'a Scene,
+        data: std::sync::Arc<SolverData>,
+    ) -> Self {
+        Self { model, scene, data }
     }
 
     fn clamp(&self, q: &mut [f64]) {
@@ -435,6 +506,11 @@ impl<'a> Solver<'a> {
                 let c = transform_point(&frames[link], sph.center);
                 let mut best = (f64::INFINITY, [0.0; 3]);
                 for (k, b) in self.scene.cuboids.iter().enumerate() {
+                    // Broad phase: a box this sphere cannot come within the margin of.
+                    let (bc, br) = self.box_bounds[k];
+                    if norm(sub(c, bc)) - br - sph.radius >= terms.margin {
+                        continue;
+                    }
                     if !self.exempt[i][k] {
                         let (d, grad) = point_box_distance(c, &b.frame, b.half_extents);
                         if d < best.0 {
@@ -461,7 +537,20 @@ impl<'a> Solver<'a> {
                 .iter()
                 .map(|s| transform_point(&frames[s.link as usize], s.center))
                 .collect();
-            for &(i, j) in &self.self_pairs {
+            let pairs = self.self_groups.iter().filter(|(a, b, _)| {
+                // Broad phase: links whose bounding spheres stay apart by the margin.
+                match (self.self_bounds[*a], self.self_bounds[*b]) {
+                    (Some((ca, ra)), Some((cb, rb))) => {
+                        let d = norm(sub(
+                            transform_point(&frames[*a], ca),
+                            transform_point(&frames[*b], cb),
+                        ));
+                        d - ra - rb < terms.margin
+                    }
+                    _ => false,
+                }
+            });
+            for &(i, j) in pairs.flat_map(|(_, _, p)| p) {
                 let v = sub(world[i], world[j]);
                 let dist = norm(v);
                 let d = dist - ss[i].radius - ss[j].radius;

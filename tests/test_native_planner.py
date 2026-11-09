@@ -694,3 +694,22 @@ def test_continuous_joints_turn_past_half_a_turn():
     goal.joint_values = [4.0, -1.2, 1.5, -1.9, -1.57, 0.0]
     trajectory = planner.plan_motion(ConfigurationTarget(goal), state)
     assert abs(trajectory.points[-1].joint_values[0] - 4.0) < 1e-9
+
+
+@pytest.mark.parametrize("post, x, z", [([0.2044, 0.2182, 0.45], 0.5893, 0.4944), ([0.2236, 0.0916, 0.45], 0.5257, 0.2822)])
+def test_cartesian_search_across_tracks(post, x, z):
+    """A Panda line past a post. Following one posture from the start loses the path (the
+    elbow runs into the post or a joint limit); the beam search over several postures,
+    branching when they die out, gets through."""
+    cell, _ = RobotCellLibrary.panda()
+    cell.rigid_body_models["post"] = RigidBody.from_mesh(Box(0.06, 0.06, 0.9).to_mesh(triangulated=True))
+    state = cell.default_cell_state()
+    state.rigid_body_states["post"] = RigidBodyState(Frame(post, [1, 0, 0], [0, 1, 0]))
+    planner = NativePlanner()
+    planner.set_robot_cell(cell, state)
+    a, b = Frame([x, -0.35, z], [1, 0, 0], [0, -1, 0]), Frame([x, 0.35, z], [1, 0, 0], [0, -1, 0])
+    trajectory = planner.plan_cartesian_motion(FrameWaypoints([a, b], TargetMode.ROBOT), state)
+    assert frames_close(_reached(planner, state, trajectory.points[0]), a)
+    assert frames_close(_reached(planner, state, trajectory.points[-1]), b)
+    _assert_free_path(planner, trajectory)
+    assert all(c is None for c in planner.client.core.exact_check([p.joint_values for p in trajectory.points]))

@@ -453,12 +453,22 @@ Follow-ups done since:
   the sphere checker. Timings: 8 solutions in 3.4 ms (Panda) and 3.2 ms (RFL robot 11),
   1.8 ms and 58 ms for point-axis targets. In the live demo the Panda's "post" plan went
   from 125 ms (Python IK) to 3 ms.
-- **Cartesian paths for any robot** (`cartesian::plan_cartesian_tracked`): numerical IK
-  follows the path from up to 8 starting solutions in parallel, each waypoint solved from
-  the previous one; tracks that lose the target, jump or collide (nodes and edges, sphere
-  model) are dropped, the cheapest survivor that passes the exact check wins. Panda line:
-  4.5 ms; RFL 4 m line with the gantry: 54 ms (405 points). With a free axis the rotation
-  about the tool axis is continuous, not sampled.
+- **Cartesian paths for any robot** (`cartesian::plan_cartesian_tracked`): a beam search.
+  Each waypoint keeps up to `tracks` (8) configurations, each solved from a configuration
+  of the previous waypoint; when fewer than a quarter survive (collisions, joint limits,
+  lost targets) the layer branches from perturbed postures of the previous layer. The
+  path is the cheapest through the layers by dynamic programming (any two configurations
+  within `max_joint_step`), with edges checked lazily (spheres, then exact meshes) as in
+  the closed-form planner. The first version followed 8 tracks greedily, each dying at
+  its first failure; on 60 random Panda lines past a post the beam search solved every
+  case the greedy one did, and 2 more (`test_cartesian_search_across_tracks`). Panda
+  line: 6-7 ms; RFL 4 m line with the gantry: about 85 ms (405 points; 54 ms greedy, the
+  difference is synchronising the tracks at every waypoint). With a free axis the
+  rotation about the tool axis is continuous, not sampled.
+- **IK speed-ups:** the solver's precomputation (joint chains, touch exemptions, sphere
+  pairs) is kept in the core until the model or scene changes, and the collision
+  residuals have a broad phase (box bounding spheres, per-link bounding spheres for self
+  pairs). RFL robot 11: 8 solutions in 1.5 ms (3.2 ms before).
 - **compas_fab API gaps closed:** `PointAxisTarget` in `iter_inverse_kinematics`,
   `PointAxisWaypoints` in `plan_cartesian_motion` (x axis carried over between
   waypoints), all three target modes (the free rotation is about the TCF or OCF, not the

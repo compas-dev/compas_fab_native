@@ -19,7 +19,7 @@ backend API, but what it supports is limited (see below) and may change.
 
 | What you get | What you give up |
 |---|---|
-| Cartesian paths in milliseconds, through the compas_fab API | Robots without a closed form follow the path from a few starting solutions: a path that needs the arm to reconfigure on the way may not be found |
+| Cartesian paths in milliseconds, through the compas_fab API | Robots without a closed form search a beam of postures along the path (8 by default, `tracks`): wide, but not exhaustive |
 | Free motion in milliseconds, for any serial robot, timed under velocity and acceleration limits | No jerk limits yet |
 | Closed-form IK for UR (offset wrist) and spherical-wrist arms; numerical IK (collision-aware) for every other robot | Numerical IK finds solutions from seeds: "no solution" means none was found, not that none exists |
 | Sphere-model collision checks for thousands of configurations per millisecond, validated on exact meshes, including tools and workpieces the robot carries | Large flat links (gantry carriages) are approximated loosely; the exact check catches what the spheres miss, at the cost of slower plans |
@@ -71,8 +71,8 @@ Each example builds on the previous one and explains what the planner does as it
    by default, and `max_step_angle`, 0.1 rad), so the tool moves in straight lines. With
    closed-form IK it solves every frame (and every sampled rotation about the tool axis),
    checks all solutions for collisions in one batch, and searches for the smoothest
-   sequence through them. With numerical IK it follows the path from several starting
-   solutions and keeps the best. Point-axis waypoints leave the rotation about the axis
+   sequence through them. With numerical IK it carries a beam of postures along the path,
+   branching into new ones when they die out, and picks the smoothest sequence. Point-axis waypoints leave the rotation about the axis
    free.
 4. The chosen path is validated on the exact meshes; if a configuration collides there,
    the search continues without it.

@@ -14,7 +14,7 @@ use motion_core::cartesian::{
 use motion_core::check::{Checker, Obstacles};
 use motion_core::freespace::{self, FreeSpaceError, FreeSpaceSettings};
 use motion_core::model::Mat34;
-use motion_core::numik::{IkGoal, IkSettings, Solver};
+use motion_core::numik::{IkGoal, IkSettings, Solver, SolverData};
 use motion_core::reference::forward_kinematics;
 use motion_core::timing::{time_parameterize, TimingSettings};
 use motion_core::{load_robot, load_scene, ModelBuffers, RobotModel, Scene};
@@ -83,6 +83,8 @@ struct NativeCore {
     /// Links as loaded, before passive joint values are baked in.
     rest_links: Vec<motion_core::model::Link>,
     passive: HashMap<String, f64>,
+    /// Numerical IK precomputation, rebuilt when the model or the scene changes.
+    ik_data: Option<std::sync::Arc<SolverData>>,
 }
 
 /// Configurations along a joint-space path, no joint moving more than `step` between two.
@@ -118,6 +120,17 @@ fn inflate_spheres(model: &RobotModel, margin: f64) -> RobotModel {
 }
 
 impl NativeCore {
+    /// Numerical IK data for the current model and scene (built on first use).
+    fn ik_data(&mut self) -> std::sync::Arc<SolverData> {
+        if self.ik_data.is_none() {
+            self.ik_data = Some(std::sync::Arc::new(SolverData::new(
+                &self.model,
+                &self.scene,
+            )));
+        }
+        self.ik_data.clone().unwrap()
+    }
+
     fn checker(&mut self) -> &Checker {
         if self.checker.is_none() {
             self.checker = Some(Checker::new(
@@ -142,6 +155,7 @@ impl NativeCore {
         self.buffers = ModelBuffers::new(&self.model, &scene);
         self.scene = scene;
         self.checker = None;
+        self.ik_data = None;
         Ok(())
     }
 }
@@ -170,6 +184,7 @@ impl NativeCore {
             checker: None,
             rest_links: Vec::new(),
             passive: HashMap::new(),
+            ik_data: None,
         };
         core.rest_links = core.model.links.clone();
         core.load_scene(scene_json)?;
@@ -276,7 +291,7 @@ impl NativeCore {
         margin = 0.0,
     ))]
     fn numeric_inverse_kinematics(
-        &self,
+        &mut self,
         py: Python<'_>,
         frame: Vec<f64>,
         tcf: Option<Vec<f64>>,
@@ -306,8 +321,9 @@ impl NativeCore {
             collision_weight: if check_collision { 1.0 } else { 0.0 },
             ..Default::default()
         };
+        let data = self.ik_data();
         let buffers = &self.buffers;
-        let solver = Solver::new(&self.model, &self.scene);
+        let solver = Solver::with_data(&self.model, &self.scene, data);
         Ok(py.detach(|| {
             let accept = |q: &[f64]| !check_collision || check_configs(buffers, &[q])[0] > margin;
             solver.solve(&goal, &seeds, &settings, &accept)
@@ -351,6 +367,7 @@ impl NativeCore {
         self.scene.esdf_margin = margin;
         self.buffers = ModelBuffers::new(&self.model, &self.scene);
         self.checker = None;
+        self.ik_data = None;
         Ok((blocks, t.elapsed().as_secs_f64()))
     }
 
@@ -406,6 +423,7 @@ impl NativeCore {
         self.passive = values;
         self.buffers = ModelBuffers::new(&self.model, &self.scene);
         self.checker = None;
+        self.ik_data = None;
         if let Some(exact) = &mut self.exact {
             exact.set_links(self.model.links.clone());
         }
@@ -665,7 +683,7 @@ impl NativeCore {
     ))]
     #[allow(clippy::too_many_arguments)]
     fn plan_cartesian(
-        &self,
+        &mut self,
         py: Python<'_>,
         waypoints: Vec<Vec<f64>>,
         tcf: Option<Vec<f64>>,
@@ -715,6 +733,7 @@ impl NativeCore {
                 "the closed-form Cartesian planner needs 6 joints",
             ));
         }
+        let ik_data = if numeric { Some(self.ik_data()) } else { None };
         let checker = if exact { self.exact.as_ref() } else { None };
         let result: Result<(Vec<Vec<f64>>, f64, CartesianStats), CartesianError> = if numeric {
             let ik = IkSettings {
@@ -733,9 +752,10 @@ impl NativeCore {
                 let v = validator
                     .as_ref()
                     .map(|f| f as &(dyn Fn(&[Vec<f64>]) -> Vec<bool> + Sync));
+                let solver = Solver::with_data(&self.model, &self.scene, ik_data.clone().unwrap());
                 plan_cartesian_tracked(
                     &self.model,
-                    &self.scene,
+                    &solver,
                     &self.buffers,
                     &req,
                     free_axis,

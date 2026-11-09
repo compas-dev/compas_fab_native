@@ -389,20 +389,43 @@ fn between(a: &[f64], b: &[f64], step: f64) -> Vec<Vec<f64>> {
         .collect()
 }
 
-/// Cartesian path by numerical IK, for robots without a closed form.
+/// Largest absolute joint difference.
+fn max_diff(a: &[f64], b: &[f64]) -> f64 {
+    a.iter()
+        .zip(b)
+        .map(|(x, y)| (x - y).abs())
+        .fold(0.0, f64::max)
+}
+
+/// Sum of absolute joint differences (the path cost, as for the closed-form planner).
+fn l1(a: &[f64], b: &[f64]) -> f64 {
+    a.iter().zip(b).map(|(x, y)| (x - y).abs()).sum()
+}
+
+/// Cartesian path by numerical IK, for robots without a closed form: a beam search over
+/// the waypoints.
 ///
-/// Every waypoint is solved from the previous waypoint's configuration (which is also the
-/// rest posture of that solve), so the joints follow the path continuously; with
-/// `free_axis` the rotation about the tool axis is left to the solver. Without a start
-/// configuration, up to `tracks` distinct collision-free solutions of the first waypoint
-/// (solved from `seeds` first, e.g. the current configuration) start a track each, in
-/// parallel. Tracks that lose the target, jump more than
-/// `max_joint_step` or collide (nodes or interpolated edges, sphere model) are dropped;
-/// the cheapest remaining one that also passes the exact validator is returned.
+/// Every waypoint gets a layer of up to `tracks` configurations. The first layer is the
+/// start configuration, or distinct collision-free solutions of the first waypoint
+/// (solved from `seeds` first). Each next layer is solved from every configuration of the
+/// previous one (which is also the rest posture of that solve, so the joints move as
+/// little as possible); with `free_axis` the rotation about the tool axis is left to the
+/// solver. When fewer than `tracks` distinct configurations survive, the layer branches:
+/// each survivor's parent is perturbed a little and solved again, which finds other
+/// postures of a redundant arm (and gets around a joint limit or an obstacle that ended
+/// a track). Configurations that collide (sphere model), or are further than
+/// `max_joint_step` from every configuration of the previous layer, are dropped; the
+/// layer keeps the `tracks` cheapest.
+///
+/// The path is then the cheapest through the layers (sum of joint changes), found by
+/// dynamic programming between any two configurations of consecutive layers within
+/// `max_joint_step`. As in the closed-form planner, the motion along the chosen edges is
+/// checked lazily (sphere model, then the exact validator), and failing edges and nodes
+/// are blocked before searching again.
 #[allow(clippy::too_many_arguments)]
 pub fn plan_cartesian_tracked(
     model: &RobotModel,
-    scene: &crate::model::Scene,
+    solver: &crate::numik::Solver,
     buffers: &ModelBuffers,
     req: &CartesianRequest,
     free_axis: bool,
@@ -411,7 +434,8 @@ pub fn plan_cartesian_tracked(
     ik: &crate::numik::IkSettings,
     exact: Option<ExactValidatorN>,
 ) -> Result<TrackedResult, CartesianError> {
-    use crate::numik::{IkGoal, Solver};
+    use crate::numik::IkGoal;
+    use crate::sampling::Rng;
     use rayon::prelude::*;
 
     let t0 = Instant::now();
@@ -421,7 +445,7 @@ pub fn plan_cartesian_tracked(
             stats: Box::new(stats),
         });
     }
-    let solver = Solver::new(model, scene);
+    let beam = tracks.max(1);
     let goal = |w: usize| IkGoal {
         target: req.waypoints[w],
         tcf: req.tcf,
@@ -429,12 +453,12 @@ pub fn plan_cartesian_tracked(
     };
     let clear = |q: &[f64]| check_configs(buffers, &[q])[0] > req.margin;
 
-    // Track starts: the start configuration, or solutions of the first waypoint.
+    // --- First layer ---------------------------------------------------------------------
     let (starts, first) = match &req.start {
         Some(start) => (vec![start.clone()], 0),
         None => {
             let settings = crate::numik::IkSettings {
-                max_results: tracks.max(1),
+                max_results: beam,
                 ..ik.clone()
             };
             let solutions = solver.solve(&goal(0), seeds, &settings, &clear);
@@ -455,73 +479,227 @@ pub fn plan_cartesian_tracked(
     };
     stats.t_ik = t0.elapsed();
 
-    // Follow each start along the waypoints.
-    let follow = |start: &Vec<f64>| -> Result<(Vec<Vec<f64>>, f64, usize), usize> {
-        let mut path = vec![start.clone()];
-        let mut cost = 0.0;
-        let tracking = crate::numik::IkSettings {
-            max_iterations: ik.max_iterations.min(60),
-            ..ik.clone()
-        };
-        for w in first..req.waypoints.len() {
-            let prev = path.last().unwrap();
-            let q = solver
-                .solve_from(prev, prev, &goal(w), &tracking)
-                .ok_or(w)?;
-            let jump = q
-                .iter()
-                .zip(prev)
-                .map(|(a, b)| (a - b).abs())
-                .fold(0.0, f64::max);
-            if jump > req.max_joint_step {
-                return Err(w);
-            }
-            cost += q.iter().zip(prev).map(|(a, b)| (a - b).abs()).sum::<f64>();
-            path.push(q);
-        }
-        // Sphere checks of every node and the motion between them, in one batch.
-        let mut configs = path.clone();
-        let mut edges = 0;
-        for pair in path.windows(2) {
-            let mid = between(&pair[0], &pair[1], req.edge_check_step);
-            edges += mid.len();
-            configs.extend(mid);
-        }
-        let clearance = check_configs(buffers, &configs);
-        if let Some(bad) = clearance.iter().position(|&c| c <= req.margin) {
-            // The waypoint where it fails, for the error message.
-            return Err(if bad < path.len() {
-                bad
+    // --- Layers ----------------------------------------------------------------------------
+    let tracking = ik.clone();
+    let dof = model.dof();
+    // Perturbation for branching: 0.15 rad for revolute joints, 2% of the travel for
+    // prismatic ones.
+    let sigma: Vec<f64> = (0..dof)
+        .map(|j| {
+            let prismatic = model.links.iter().any(|l| {
+                l.q_index == j as i32 && l.joint_type == crate::model::JointType::Prismatic
+            });
+            let [lo, hi] = model.joint_limits[j];
+            if prismatic {
+                0.02 * (hi - lo)
             } else {
-                req.waypoints.len() - 1
+                0.15
+            }
+        })
+        .collect();
+    let mut layers: Vec<Vec<Vec<f64>>> = vec![starts];
+    let mut costs: Vec<Vec<f64>> = vec![vec![0.0; layers[0].len()]];
+    let ts = Instant::now();
+    for w in first..req.waypoints.len() {
+        let prev = layers.last().unwrap();
+        let prev_cost = costs.last().unwrap();
+        let g = goal(w);
+        // Children: each parent tracked to this waypoint.
+        let solve_all = |seeds: Vec<(Vec<f64>, Vec<f64>)>| -> Vec<Vec<f64>> {
+            seeds
+                .par_iter()
+                .filter_map(|(seed, rest)| solver.solve_from(seed, rest, &g, &tracking))
+                .collect()
+        };
+        let distinct =
+            |set: &[Vec<f64>], q: &[f64]| set.iter().all(|f| max_diff(f, q) > ik.distinct);
+        // Converged children that are reachable from the previous layer and collision-free.
+        let keep = |candidates: Vec<Vec<f64>>, unique: &mut Vec<Vec<f64>>| {
+            let fresh: Vec<Vec<f64>> = candidates
+                .into_iter()
+                .filter(|q| prev.iter().any(|p| max_diff(p, q) <= req.max_joint_step))
+                .collect();
+            let clearance = check_configs(buffers, &fresh);
+            for (q, c) in fresh.into_iter().zip(clearance) {
+                if c > req.margin && distinct(unique, &q) {
+                    unique.push(q);
+                }
+            }
+        };
+        let mut unique: Vec<Vec<f64>> = Vec::new();
+        keep(
+            solve_all(prev.iter().map(|p| (p.clone(), p.clone())).collect()),
+            &mut unique,
+        );
+        stats.ik_nodes += prev.len();
+        // Branch when tracks die and the beam runs short (tracks merging onto the same
+        // posture is not a reason to); harder when nothing survived at all.
+        if unique.len() < (beam / 4).max(1) {
+            let per_parent = if unique.is_empty() { 8 } else { 3 };
+            let mut rng = Rng::new(ik.seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (w as u64 + 1));
+            let mut normal = || {
+                let (u, v) = (rng.next_f64().max(1e-12), rng.next_f64());
+                (-2.0 * u.ln()).sqrt() * (2.0 * std::f64::consts::PI * v).cos()
+            };
+            let mut branches = Vec::new();
+            for p in prev {
+                for _ in 0..per_parent {
+                    let seed: Vec<f64> = (0..dof).map(|j| p[j] + sigma[j] * normal()).collect();
+                    branches.push((seed.clone(), seed));
+                }
+            }
+            stats.ik_nodes += branches.len();
+            keep(solve_all(branches), &mut unique);
+        }
+        let mut layer: Vec<(f64, Vec<f64>)> = unique
+            .into_iter()
+            .map(|q| {
+                let cost = prev
+                    .iter()
+                    .zip(prev_cost)
+                    .filter(|(p, _)| max_diff(p, &q) <= req.max_joint_step)
+                    .map(|(p, c)| c + l1(p, &q))
+                    .fold(f64::INFINITY, f64::min);
+                (cost, q)
+            })
+            .collect();
+        if layer.is_empty() {
+            stats.t_search = ts.elapsed();
+            stats.t_total = t0.elapsed();
+            // Lost the path here: say whether the waypoint is reachable at all.
+            let any = crate::numik::IkSettings {
+                max_results: 1,
+                collision_weight: 0.0,
+                ..ik.clone()
+            };
+            return Err(if solver.solve(&g, &[], &any, &|_| true).is_empty() {
+                CartesianError::NoIk { waypoint: w }
+            } else {
+                CartesianError::NoPath {
+                    stats: Box::new(stats),
+                }
             });
         }
-        Ok((path, cost, edges))
-    };
-    let ts = Instant::now();
-    let outcomes: Vec<_> = starts.par_iter().map(follow).collect();
+        layer.sort_by(|a, b| a.0.total_cmp(&b.0));
+        layer.truncate(beam);
+        costs.push(layer.iter().map(|(c, _)| *c).collect());
+        layers.push(layer.into_iter().map(|(_, q)| q).collect());
+    }
     stats.t_search = ts.elapsed();
-    stats.search_rounds = 1;
-    stats.ik_nodes = starts.len() * (req.waypoints.len() - first + 1);
-    let mut done: Vec<(Vec<Vec<f64>>, f64, usize)> = outcomes
-        .iter()
-        .filter_map(|o| o.as_ref().ok().cloned())
-        .collect();
-    stats.free_nodes = done.iter().map(|d| d.0.len()).sum();
-    stats.edge_configs_checked = done.iter().map(|d| d.2).sum();
-    done.sort_by(|a, b| a.1.total_cmp(&b.1));
+    stats.free_nodes = layers.iter().map(Vec::len).sum();
 
-    for (path, cost, _) in done {
+    // --- Cheapest path, edges checked lazily ---------------------------------------------
+    let mut blocked: HashSet<(usize, usize, usize)> = HashSet::new();
+    let mut blocked_nodes: HashSet<(usize, usize)> = HashSet::new();
+    loop {
+        stats.search_rounds += 1;
+        let mut best: Vec<Vec<(f64, usize)>> = vec![layers[0]
+            .iter()
+            .enumerate()
+            .map(|(n, _)| {
+                (
+                    if blocked_nodes.contains(&(0, n)) {
+                        f64::INFINITY
+                    } else {
+                        0.0
+                    },
+                    usize::MAX,
+                )
+            })
+            .collect()];
+        for i in 1..layers.len() {
+            let mut cur = Vec::with_capacity(layers[i].len());
+            for (n, q) in layers[i].iter().enumerate() {
+                let mut entry = (f64::INFINITY, usize::MAX);
+                if !blocked_nodes.contains(&(i, n)) {
+                    for (m, p) in layers[i - 1].iter().enumerate() {
+                        let pc = best[i - 1][m].0;
+                        if !pc.is_finite()
+                            || blocked.contains(&(i, m, n))
+                            || max_diff(p, q) > req.max_joint_step
+                        {
+                            continue;
+                        }
+                        stats.edges_evaluated += 1;
+                        let c = pc + l1(p, q);
+                        if c < entry.0 {
+                            entry = (c, m);
+                        }
+                    }
+                }
+                cur.push(entry);
+            }
+            best.push(cur);
+        }
+        let last = best.last().unwrap();
+        let Some((end, &(cost, _))) = last
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.0.is_finite())
+            .min_by(|a, b| a.1 .0.total_cmp(&b.1 .0))
+        else {
+            stats.t_total = t0.elapsed();
+            return Err(CartesianError::NoPath {
+                stats: Box::new(stats),
+            });
+        };
+        let mut idx = vec![0usize; layers.len()];
+        idx[layers.len() - 1] = end;
+        for i in (1..layers.len()).rev() {
+            idx[i - 1] = best[i][idx[i]].1;
+        }
+        let path: Vec<Vec<f64>> = (0..layers.len())
+            .map(|i| layers[i][idx[i]].clone())
+            .collect();
+
+        // Motion along the edges, sphere model, in one batch.
+        let te = Instant::now();
+        let mut interp = Vec::new();
+        let mut owner = Vec::new();
+        for i in 1..path.len() {
+            for q in between(&path[i - 1], &path[i], req.edge_check_step) {
+                interp.push(q);
+                owner.push(i);
+            }
+        }
+        stats.edge_configs_checked += interp.len();
+        let clear_edges = check_configs(buffers, &interp);
+        let mut bad: Vec<usize> = owner
+            .iter()
+            .zip(&clear_edges)
+            .filter(|(_, &c)| c <= req.margin)
+            .map(|(&i, _)| i)
+            .collect();
+        bad.dedup();
+        stats.t_edge_checks += te.elapsed();
+        if !bad.is_empty() {
+            for i in bad {
+                blocked.insert((i, idx[i - 1], idx[i]));
+            }
+            continue;
+        }
         if let Some(exact) = exact {
             let tx = Instant::now();
             let mut configs = path.clone();
-            for pair in path.windows(2) {
-                configs.extend(between(&pair[0], &pair[1], req.edge_check_step));
-            }
-            let hit = exact(&configs).into_iter().any(|h| h);
+            configs.extend(interp.iter().cloned());
+            let hits = exact(&configs);
             stats.exact_configs_checked += configs.len();
             stats.t_exact += tx.elapsed();
-            if hit {
+            let mut rejected = false;
+            for (i, &hit) in hits[..path.len()].iter().enumerate() {
+                if hit {
+                    blocked_nodes.insert((i, idx[i]));
+                    rejected = true;
+                }
+            }
+            for (k, &hit) in hits[path.len()..].iter().enumerate() {
+                if hit {
+                    let i = owner[k];
+                    blocked.insert((i, idx[i - 1], idx[i]));
+                    rejected = true;
+                }
+            }
+            if rejected {
                 stats.exact_rejections += 1;
                 continue;
             }
@@ -529,8 +707,4 @@ pub fn plan_cartesian_tracked(
         stats.t_total = t0.elapsed();
         return Ok(TrackedResult { path, cost, stats });
     }
-    stats.t_total = t0.elapsed();
-    Err(CartesianError::NoPath {
-        stats: Box::new(stats),
-    })
 }
