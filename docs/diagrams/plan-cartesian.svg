@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1000" height="728" viewBox="0 0 1000 728" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="plan-cartesian-title plan-cartesian-desc">
+<title id="plan-cartesian-title">How plan_cartesian_motion follows a path</title>
+<desc id="plan-cartesian-desc">plan_cartesian_motion fills in frames between waypoints, builds a layered graph of closed-form IK solutions or runs a beam search with numerical IK, picks the cheapest path and blocks colliding edges until the path is free.</desc>
+<defs>
+<style>@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap');</style>
+<marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+<marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+<path d="M 500,64 V 88" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 500,144 V 176" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 404,212 H 248 Q 240,212 240,220 V 288" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="308.0" y="192" width="32" height="12" rx="2" fill="#f5f5f5"/>
+<text x="324.0" y="201" fill="#7a8399" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">YES</text>
+<path d="M 596,212 H 752 Q 760,212 760,220 V 288" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+<rect x="664.0" y="192" width="24" height="12" rx="2" fill="#f5f5f5"/>
+<text x="676.0" y="201" fill="#7a8399" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">NO</text>
+<path d="M 240,344 V 400 Q 240,408 248,408 H 380" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 760,344 V 400 Q 760,408 752,408 H 620" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+<path d="M 500,448 V 496" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 596,532 H 700" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="632.0" y="512" width="32" height="12" rx="2" fill="#f5f5f5"/>
+<text x="648.0" y="521" fill="#7a8399" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">YES</text>
+<path d="M 800,504 V 440 Q 800,432 792,432 H 620" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 500,568 V 608" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="508" y="582" width="24" height="12" rx="2" fill="#f5f5f5"/>
+<text x="520.0" y="591" fill="#7a8399" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">NO</text>
+<rect x="400" y="24" width="200" height="40" rx="20.0" fill="#f5f5f5"/>
+<rect x="400" y="24" width="200" height="40" rx="20.0" fill="rgba(79,93,117,0.10)" stroke="#7a8399" stroke-width="1"/>
+<text x="500.0" y="40.0" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Waypoints</text>
+<text x="500.0" y="54.0" fill="#4f5d75" font-size="9" font-weight="400" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">frames · point-axis</text>
+<rect x="352" y="88" width="296" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="352" y="88" width="296" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="500.0" y="114.0" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Fill in frames</text>
+<text x="500.0" y="130.0" fill="#4f5d75" font-size="9" font-weight="400" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">every max_step · max_step_angle</text>
+<polygon points="500,176 596,212 500,248 404,212" fill="#f5f5f5"/>
+<polygon points="500,176 596,212 500,248 404,212" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="500" y="209" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Closed-form</text>
+<text x="500" y="223" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">IK?</text>
+<rect x="104" y="288" width="272" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="104" y="288" width="272" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="240.0" y="314.0" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Layered graph</text>
+<text x="240.0" y="330.0" fill="#4f5d75" font-size="9" font-weight="400" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">all IK branches × axis samples</text>
+<rect x="624" y="288" width="272" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="624" y="288" width="272" height="56" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="760.0" y="314.0" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Beam search</text>
+<text x="760.0" y="330.0" fill="#4f5d75" font-size="9" font-weight="400" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">tracks follow, branch when they die</text>
+<rect x="380" y="392" width="240" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="380" y="392" width="240" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="500.0" y="418.0" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Cheapest path</text>
+<text x="500.0" y="434.0" fill="#4f5d75" font-size="9" font-weight="400" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">dynamic programming</text>
+<polygon points="500,496 596,532 500,568 404,532" fill="#f5f5f5"/>
+<polygon points="500,496 596,532 500,568 404,532" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="500" y="529" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Edges or nodes</text>
+<text x="500" y="543" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">collide?</text>
+<rect x="700" y="504" width="200" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="700" y="504" width="200" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="800.0" y="530.0" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Block them</text>
+<text x="800.0" y="546.0" fill="#4f5d75" font-size="9" font-weight="400" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">spheres, then meshes</text>
+<rect x="400" y="608" width="200" height="40" rx="20.0" fill="#f5f5f5"/>
+<rect x="400" y="608" width="200" height="40" rx="20.0" fill="rgba(79,93,117,0.10)" stroke="#7a8399" stroke-width="1"/>
+<text x="500.0" y="632.0" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Trajectory</text>
+<line x1="24" y1="684" x2="976" y2="684" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="24" y="704" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">LEGEND</text>
+<rect x="104" y="696" width="20" height="12" rx="6" fill="rgba(79,93,117,0.10)" stroke="#7a8399" stroke-width="1"/>
+<text x="132" y="705" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">start / end</text>
+<rect x="215" y="696" width="20" height="12" rx="3" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="243" y="705" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">step</text>
+<polygon points="298,694 308,702 298,710 288,702" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="316" y="705" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">decision</text>
+<rect x="383" y="696" width="20" height="12" rx="3" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="411" y="705" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">numerical IK path</text>
+</svg>

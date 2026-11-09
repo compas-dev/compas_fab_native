@@ -56,6 +56,9 @@ Each example builds on the previous one and explains what the planner does as it
 
 ## How it works, in short
 
+The full explanation, with diagrams, is in [How it works](native/how-it-works.md).
+
+
 1. `set_robot_cell` fits spheres inside every link mesh and sends the robot, its meshes and
    the obstacles to the core. Sphere fits are cached (in memory and in
    `~/.cache/compas_fab/native_spheres`; `COMPAS_FAB_NATIVE_CACHE=0` turns that off), so

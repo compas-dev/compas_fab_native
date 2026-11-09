@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1000" height="784" viewBox="0 0 1000 784" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="plan-motion-title plan-motion-desc">
+<title id="plan-motion-title">How plan_motion finds a path</title>
+<desc id="plan-motion-desc">plan_motion turns the target into goal configurations, tries the straight motion, otherwise runs RRT-Connect and smooths the path, re-plans on inflated spheres if the exact meshes are touched, and times the result.</desc>
+<defs>
+<style>@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap');</style>
+<marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+<marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+<path d="M 500,64 V 88" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 500,144 V 168" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 500,240 V 280" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="508" y="254" width="24" height="12" rx="2" fill="#f5f5f5"/>
+<text x="520.0" y="263" fill="#7a8399" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">NO</text>
+<path d="M 404,204 H 248 Q 240,204 240,212 V 480 Q 240,488 248,488 H 404" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="308.0" y="184" width="32" height="12" rx="2" fill="#f5f5f5"/>
+<text x="324.0" y="193" fill="#7a8399" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">YES</text>
+<path d="M 500,336 V 376" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 500,424 V 452" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 596,488 H 822 Q 830,488 830,480 V 336" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+<rect x="696.0" y="468" width="32" height="12" rx="2" fill="#f5f5f5"/>
+<text x="712.0" y="477" fill="#7a8399" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">YES</text>
+<path d="M 720,308 H 620" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+<path d="M 500,524 V 568" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="508" y="540" width="24" height="12" rx="2" fill="#f5f5f5"/>
+<text x="520.0" y="549" fill="#7a8399" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">NO</text>
+<path d="M 500,624 V 664" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="400" y="24" width="200" height="40" rx="20.0" fill="#f5f5f5"/>
+<rect x="400" y="24" width="200" height="40" rx="20.0" fill="rgba(79,93,117,0.10)" stroke="#7a8399" stroke-width="1"/>
+<text x="500.0" y="40.0" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Target</text>
+<text x="500.0" y="54.0" fill="#4f5d75" font-size="9" font-weight="400" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">configuration · frame · point-axis</text>
+<rect x="352" y="88" width="296" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="352" y="88" width="296" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="500.0" y="114.0" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Goal configurations</text>
+<text x="500.0" y="130.0" fill="#4f5d75" font-size="9" font-weight="400" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">every IK solution, minus those touching meshes</text>
+<polygon points="500,168 596,204 500,240 404,204" fill="#f5f5f5"/>
+<polygon points="500,168 596,204 500,240 404,204" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="500" y="201" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Straight motion</text>
+<text x="500" y="215" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">free?</text>
+<rect x="380" y="280" width="240" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="380" y="280" width="240" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="500.0" y="306.0" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">RRT-Connect</text>
+<text x="500.0" y="322.0" fill="#4f5d75" font-size="9" font-weight="400" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">from the start and every goal</text>
+<rect x="380" y="376" width="240" height="48" rx="6" fill="#f5f5f5"/>
+<rect x="380" y="376" width="240" height="48" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="500.0" y="404.0" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Shortcut + B-spline</text>
+<polygon points="500,452 596,488 500,524 404,488" fill="#f5f5f5"/>
+<polygon points="500,452 596,488 500,524 404,488" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="500" y="485" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Touches exact</text>
+<text x="500" y="499" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">meshes?</text>
+<rect x="720" y="280" width="220" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="720" y="280" width="220" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="830.0" y="306.0" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Inflate spheres</text>
+<text x="830.0" y="322.0" fill="#4f5d75" font-size="9" font-weight="400" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">+5 … 30 mm, new seed</text>
+<rect x="380" y="568" width="240" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="380" y="568" width="240" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="500.0" y="594.0" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Time it</text>
+<text x="500.0" y="610.0" fill="#4f5d75" font-size="9" font-weight="400" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">TOPP-RA, blended corners</text>
+<rect x="400" y="664" width="200" height="40" rx="20.0" fill="#f5f5f5"/>
+<rect x="400" y="664" width="200" height="40" rx="20.0" fill="rgba(79,93,117,0.10)" stroke="#7a8399" stroke-width="1"/>
+<text x="500.0" y="688.0" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Trajectory</text>
+<line x1="24" y1="740" x2="976" y2="740" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="24" y="760" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">LEGEND</text>
+<rect x="104" y="752" width="20" height="12" rx="6" fill="rgba(79,93,117,0.10)" stroke="#7a8399" stroke-width="1"/>
+<text x="132" y="761" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">start / end</text>
+<rect x="215" y="752" width="20" height="12" rx="3" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="243" y="761" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">step</text>
+<polygon points="298,750 308,758 298,766 288,758" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="316" y="761" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">decision</text>
+</svg>
