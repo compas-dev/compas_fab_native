@@ -9,8 +9,8 @@
 //! (one body entirely inside another) is caught by testing one vertex for inclusion.
 
 use parry3d::math::{Mat3, Pose, Rot3, Vec3};
-use parry3d::query::intersection_test;
-use parry3d::shape::{Cuboid, Shape, TriMesh, TriMeshFlags};
+use parry3d::query::{distance, intersection_test};
+use parry3d::shape::{ConvexPolyhedron, Cuboid, Shape, TriMesh, TriMeshFlags};
 use serde::Deserialize;
 
 use motion_core::model::{Mat34, RobotModel, Scene};
@@ -59,6 +59,16 @@ pub struct ExactChecker {
     obstacles: Vec<Obstacle>,
     /// Link index pairs to test against each other.
     pairs: Vec<(usize, usize)>,
+    /// Links `check_focus` tests (see `set_focus`), and the pairs that involve them.
+    focus: Vec<usize>,
+    focus_pairs: Vec<(usize, usize)>,
+    /// Convex hull of every link with a mesh, for `check_focus`, and its bounding sphere
+    /// (centre in link coordinates, radius) for a quick first test.
+    hulls: Vec<Option<ConvexPolyhedron>>,
+    hull_bounds: Vec<(Vec3, f32)>,
+    /// The scene's boxes, for `check_focus` (see `set_focus_obstacles`): shape, pose,
+    /// links allowed to touch it, bounding radius.
+    focus_boxes: Vec<(Cuboid, Pose, Vec<usize>, f32)>,
 }
 
 /// What collides, for reporting.
@@ -121,17 +131,40 @@ fn overlap(a: &Body, pa: &Pose, b: &Body, pb: &Pose) -> bool {
         || (a.solid && a.shape.contains_point(pa, pb.transform_point(b.probe)))
 }
 
+/// Margin of the convex-hull tests of `check_focus`: parry's hulls can fall about a
+/// millimetre short of their meshes (its quickhull tolerances), so hulls closer than this
+/// count as touching. Keeps the test conservative.
+pub const HULL_MARGIN: f32 = 0.005;
+
 impl ExactChecker {
     /// `robot_meshes`: `{"links": [{"link": i, "vertices": [...], "faces": [...]}]}` in link coordinates.
     pub fn new(model: RobotModel, robot_meshes: &str) -> Result<Self, String> {
         let parsed: RobotMeshesJson =
             serde_json::from_str(robot_meshes).map_err(|e| e.to_string())?;
         let mut links: Vec<Option<Body>> = (0..model.links.len()).map(|_| None).collect();
+        let mut hulls: Vec<Option<ConvexPolyhedron>> =
+            (0..model.links.len()).map(|_| None).collect();
+        let mut hull_bounds = vec![(Vec3::ZERO, 0.0f32); model.links.len()];
         for m in &parsed.links {
             if m.link >= links.len() {
                 return Err(format!("mesh for unknown link {}", m.link));
             }
             links[m.link] = Some(trimesh_body(m)?);
+            let points: Vec<Vec3> = m
+                .vertices
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|v| Vec3::new(v[0] as f32, v[1] as f32, v[2] as f32))
+                .collect();
+            hulls[m.link] = ConvexPolyhedron::from_convex_hull(&points);
+            let n = points.len().max(1) as f32;
+            let c = points.iter().fold(Vec3::ZERO, |a, p| a + *p) / n;
+            let r = points
+                .iter()
+                .map(|p| (*p - c).length())
+                .fold(0.0f32, f32::max);
+            hull_bounds[m.link] = (c, r);
         }
         let disabled = |a: usize, b: usize| {
             model
@@ -152,6 +185,11 @@ impl ExactChecker {
             links,
             obstacles: Vec::new(),
             pairs,
+            focus: Vec::new(),
+            focus_pairs: Vec::new(),
+            hulls,
+            hull_bounds,
+            focus_boxes: Vec::new(),
         })
     }
 
@@ -263,6 +301,94 @@ impl ExactChecker {
         }
         let last = path.last()?;
         self.check(last).map(|c| (path.len() - 1, 0.0, c))
+    }
+
+    /// Links for `check_focus`: those the sphere model approximates poorly. Links without a
+    /// mesh (or a convex hull) are ignored.
+    pub fn set_focus(&mut self, links: &[usize]) {
+        self.focus = links
+            .iter()
+            .copied()
+            .filter(|&l| self.hulls.get(l).is_some_and(|h| h.is_some()))
+            .collect();
+        self.focus_pairs = self
+            .pairs
+            .iter()
+            .copied()
+            .filter(|(a, b)| self.focus.contains(a) || self.focus.contains(b))
+            .filter(|(a, b)| self.hulls[*a].is_some() && self.hulls[*b].is_some())
+            .collect();
+    }
+
+    /// The scene's boxes, which `check_focus` tests the focus links against.
+    pub fn set_focus_obstacles(&mut self, scene: &Scene) {
+        self.focus_boxes = scene
+            .cuboids
+            .iter()
+            .map(|c| {
+                let half = Vec3::new(
+                    c.half_extents[0] as f32,
+                    c.half_extents[1] as f32,
+                    c.half_extents[2] as f32,
+                );
+                let touch = c
+                    .touch_links
+                    .iter()
+                    .filter_map(|n| self.link_index(n))
+                    .collect();
+                (Cuboid::new(half), pose(&c.frame), touch, half.length())
+            })
+            .collect();
+    }
+
+    pub fn has_focus(&self) -> bool {
+        !self.focus.is_empty()
+    }
+
+    /// True if a focus link may collide at `q`, tested on convex hulls (conservative: a
+    /// hull contains its mesh, and hulls within `HULL_MARGIN` count as touching): with
+    /// another link's hull, or with a scene box it may not touch. Fast enough to run on every configuration a planner checks (convex-convex
+    /// tests, unlike the mesh-mesh tests of `check`); obstacles given only as meshes (the
+    /// ESDF) are left to the final `check`.
+    pub fn check_focus(&self, q: &[f64]) -> bool {
+        if self.focus.is_empty() {
+            return false;
+        }
+        let frames = forward_kinematics(&self.model, q);
+        let poses: Vec<Pose> = frames.iter().map(pose).collect();
+        let hull = |i: usize| self.hulls[i].as_ref().unwrap();
+        // Bounding sphere of link `i`'s hull, in world coordinates.
+        let bound = |i: usize| {
+            let (c, r) = self.hull_bounds[i];
+            (poses[i].transform_point(c), r)
+        };
+        for &(a, b) in &self.focus_pairs {
+            let ((ca, ra), (cb, rb)) = (bound(a), bound(b));
+            if (ca - cb).length() > ra + rb + HULL_MARGIN {
+                continue;
+            }
+            if distance(&poses[a], hull(a), &poses[b], hull(b))
+                .is_ok_and(|d| d.distance <= HULL_MARGIN)
+            {
+                return true;
+            }
+        }
+        for &i in &self.focus {
+            let (ci, ri) = bound(i);
+            for (cuboid, box_pose, touch, rb) in &self.focus_boxes {
+                if touch.contains(&i)
+                    || (ci - box_pose.translation).length() > ri + rb + HULL_MARGIN
+                {
+                    continue;
+                }
+                if distance(&poses[i], hull(i), box_pose, cuboid)
+                    .is_ok_and(|d| d.distance <= HULL_MARGIN)
+                {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Collision flags for many configurations, checked in parallel.

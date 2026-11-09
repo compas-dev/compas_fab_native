@@ -175,7 +175,13 @@ pub struct Checker {
     /// Static links already touch an obstacle: every configuration collides.
     static_collision: bool,
     obstacles: Obstacles,
+    /// A further test for configurations the spheres find free (true = collision), e.g.
+    /// exact meshes for links the spheres approximate poorly. See `with_extra`.
+    extra: Option<ExtraCheck>,
 }
+
+/// Collision test for one configuration (true = collision), run after the sphere checks.
+pub type ExtraCheck = Arc<dyn Fn(&[f32]) -> bool + Send + Sync>;
 
 /// Spheres grouped by link, re-expressed in each link's FK frame (`frames[link]`, with the
 /// link's pose in that frame `poses[link]`).
@@ -411,7 +417,17 @@ impl Checker {
             static_bounds,
             static_collision,
             obstacles,
+            extra: None,
         }
+    }
+
+    /// Also run `extra` on every configuration the spheres find free. It is the last word
+    /// on configurations the sphere model cannot judge (links it approximates poorly), and
+    /// it runs only when the spheres found no contact, so it adds nothing to the cost of
+    /// configurations that collide anyway.
+    pub fn with_extra(mut self, extra: ExtraCheck) -> Self {
+        self.extra = Some(extra);
+        self
     }
 
     pub fn obstacles(&self) -> &Obstacles {
@@ -558,6 +574,18 @@ impl Checker {
                     if dist_sq(&pa, pos(gj, b)).simd_le(v(r * r)).any() {
                         return true;
                     }
+                }
+            }
+        }
+        if let Some(extra) = &self.extra {
+            let lanes: Vec<[f32; LANES]> = q.iter().map(|x| x.to_array()).collect();
+            let mut config = vec![0.0f32; q.len()];
+            for l in 0..LANES {
+                for (c, lane) in config.iter_mut().zip(&lanes) {
+                    *c = lane[l];
+                }
+                if extra(&config) {
+                    return true;
                 }
             }
         }

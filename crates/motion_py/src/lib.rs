@@ -11,7 +11,7 @@ use motion_core::cartesian::{
     check_configs, plan_cartesian_tracked, plan_cartesian_with, CartesianError, CartesianRequest,
     CartesianStats, Config,
 };
-use motion_core::check::{Checker, Obstacles};
+use motion_core::check::{Checker, ExtraCheck, Obstacles};
 use motion_core::freespace::{self, FreeSpaceError, FreeSpaceSettings};
 use motion_core::model::Mat34;
 use motion_core::numik::{IkGoal, IkSettings, Solver, SolverData};
@@ -76,7 +76,10 @@ struct NativeCore {
     buffers: ModelBuffers,
     auto_disable_samples: usize,
     auto_touch: Vec<(String, String, usize)>,
-    exact: Option<ExactChecker>,
+    exact: Option<std::sync::Arc<ExactChecker>>,
+    /// Links the sphere model approximates poorly (`exact_links` of the robot JSON): with
+    /// exact meshes set, every collision check also tests them on their meshes.
+    exact_links: Vec<usize>,
     esdf: Option<(std::sync::Arc<motion_core::esdf::VoxelEsdf>, f32)>,
     /// Yes/no checker for free-space planning, rebuilt when the scene changes.
     checker: Option<Checker>,
@@ -133,12 +136,48 @@ impl NativeCore {
 
     fn checker(&mut self) -> &Checker {
         if self.checker.is_none() {
-            self.checker = Some(Checker::new(
-                &self.model,
-                Obstacles::from_scene(&self.model, &self.scene),
-            ));
+            let checker =
+                Checker::new(&self.model, Obstacles::from_scene(&self.model, &self.scene));
+            self.checker = Some(match self.focus_check() {
+                Some(extra) => checker.with_extra(extra),
+                None => checker,
+            });
         }
         self.checker.as_ref().unwrap()
+    }
+
+    /// The exact test of the poorly approximated links, for `Checker::with_extra`.
+    fn focus_check(&self) -> Option<ExtraCheck> {
+        let exact = self.exact.as_ref().filter(|e| e.has_focus())?.clone();
+        Some(std::sync::Arc::new(move |q: &[f32]| {
+            exact.check_focus(&q.iter().map(|&x| x as f64).collect::<Vec<f64>>())
+        }))
+    }
+
+    /// Clearances of the sphere model, set to 0 (contact) where a poorly approximated
+    /// link collides on its exact mesh.
+    fn clearances(&self, configs: &[Vec<f64>]) -> Vec<f32> {
+        let mut clearance = check_configs(&self.buffers, configs);
+        if let Some(exact) = self.exact.as_ref().filter(|e| e.has_focus()) {
+            use rayon::prelude::*;
+            let hits: Vec<bool> = configs
+                .par_iter()
+                .zip(&clearance)
+                .map(|(q, &c)| c > 0.0 && exact.check_focus(q))
+                .collect();
+            for (c, hit) in clearance.iter_mut().zip(hits) {
+                if hit {
+                    *c = 0.0;
+                }
+            }
+        }
+        clearance
+    }
+
+    /// The exact checker, for changing it: the checker hooks that share it are dropped.
+    fn exact_mut(&mut self) -> Option<&mut ExactChecker> {
+        self.checker = None;
+        self.exact.as_mut().and_then(std::sync::Arc::get_mut)
     }
 
     fn load_scene(&mut self, scene_json: &str) -> PyResult<()> {
@@ -156,6 +195,10 @@ impl NativeCore {
         self.scene = scene;
         self.checker = None;
         self.ik_data = None;
+        let scene = self.scene.clone();
+        if let Some(exact) = self.exact_mut() {
+            exact.set_focus_obstacles(&scene);
+        }
         Ok(())
     }
 }
@@ -169,6 +212,11 @@ impl NativeCore {
     #[pyo3(signature = (robot_json, scene_json, auto_disable_samples = 1000))]
     fn new(robot_json: &str, scene_json: &str, auto_disable_samples: usize) -> PyResult<Self> {
         let (mut model, _) = load_robot(robot_json).map_err(PyValueError::new_err)?;
+        let exact_links: Vec<usize> = serde_json::from_str::<serde_json::Value>(robot_json)
+            .ok()
+            .and_then(|v| v.get("exact_links").cloned())
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default();
         if auto_disable_samples > 0 {
             model.disable_always_colliding(auto_disable_samples, 0.95, 7);
         }
@@ -180,6 +228,7 @@ impl NativeCore {
             auto_disable_samples,
             auto_touch: Vec::new(),
             exact: None,
+            exact_links,
             esdf: None,
             checker: None,
             rest_links: Vec::new(),
@@ -323,9 +372,14 @@ impl NativeCore {
         };
         let data = self.ik_data();
         let buffers = &self.buffers;
+        let focus = self.exact.clone().filter(|e| e.has_focus());
         let solver = Solver::with_data(&self.model, &self.scene, data);
         Ok(py.detach(|| {
-            let accept = |q: &[f64]| !check_collision || check_configs(buffers, &[q])[0] > margin;
+            let accept = |q: &[f64]| {
+                !check_collision
+                    || (check_configs(buffers, &[q])[0] > margin
+                        && !focus.as_ref().is_some_and(|e| e.check_focus(q)))
+            };
             solver.solve(&goal, &seeds, &settings, &accept)
         }))
     }
@@ -342,7 +396,10 @@ impl NativeCore {
         checker
             .set_obstacle_meshes(obstacle_meshes_json)
             .map_err(PyValueError::new_err)?;
-        self.exact = Some(checker);
+        checker.set_focus(&self.exact_links);
+        checker.set_focus_obstacles(&self.scene);
+        self.exact = Some(std::sync::Arc::new(checker));
+        self.checker = None;
         Ok(())
     }
 
@@ -373,7 +430,7 @@ impl NativeCore {
 
     /// Replace the obstacle meshes of the exact checker.
     fn set_exact_obstacles(&mut self, obstacle_meshes_json: &str) -> PyResult<()> {
-        match self.exact.as_mut() {
+        match self.exact_mut() {
             Some(c) => c
                 .set_obstacle_meshes(obstacle_meshes_json)
                 .map_err(PyValueError::new_err),
@@ -410,7 +467,7 @@ impl NativeCore {
         for c in &configs {
             check_dof(&self.model, c)?;
         }
-        Ok(py.detach(|| check_configs(&self.buffers, &configs)))
+        Ok(py.detach(|| self.clearances(&configs)))
     }
 
     /// Values (by joint name) of joints outside the planning group, e.g. gripper fingers;
@@ -424,8 +481,9 @@ impl NativeCore {
         self.buffers = ModelBuffers::new(&self.model, &self.scene);
         self.checker = None;
         self.ik_data = None;
-        if let Some(exact) = &mut self.exact {
-            exact.set_links(self.model.links.clone());
+        let links = self.model.links.clone();
+        if let Some(exact) = self.exact_mut() {
+            exact.set_links(links);
         }
         true
     }
@@ -545,7 +603,8 @@ impl NativeCore {
         let resolution = resolution.unwrap_or_else(|| self.default_resolution());
         self.checker();
         let checker = self.checker.as_ref().unwrap();
-        let exact_checker = if exact { self.exact.as_ref() } else { None };
+        let exact_checker = if exact { self.exact.as_deref() } else { None };
+        let focus = self.focus_check();
         let f32s = |v: &[f64]| v.iter().map(|&x| x as f32).collect::<Vec<f32>>();
         let (start32, goals32): (Vec<f32>, Vec<Vec<f32>>) =
             (f32s(&start), goals.iter().map(|g| f32s(g)).collect());
@@ -569,7 +628,11 @@ impl NativeCore {
                 let inflated = (exact_rejections > 0).then(|| {
                     let margin = [0.005, 0.01, 0.02, 0.03][(exact_rejections - 1).min(3)];
                     let model = inflate_spheres(&self.model, margin);
-                    Checker::new(&model, Obstacles::from_scene(&model, &self.scene))
+                    let c = Checker::new(&model, Obstacles::from_scene(&model, &self.scene));
+                    match &focus {
+                        Some(f) => c.with_extra(f.clone()),
+                        None => c,
+                    }
                 });
                 let mut result = match &inflated {
                     Some(c) => freespace::plan(c, &start32, &goals32, &settings),
@@ -734,7 +797,7 @@ impl NativeCore {
             ));
         }
         let ik_data = if numeric { Some(self.ik_data()) } else { None };
-        let checker = if exact { self.exact.as_ref() } else { None };
+        let checker = if exact { self.exact.as_deref() } else { None };
         let result: Result<(Vec<Vec<f64>>, f64, CartesianStats), CartesianError> = if numeric {
             let ik = IkSettings {
                 seed,

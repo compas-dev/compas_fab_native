@@ -120,7 +120,7 @@ pub struct ModelBuffers {
 }
 
 /// Upper bound on spheres per robot in the CPU lanes kernel (world-sphere scratch).
-pub const MAX_SPHERES: usize = 256;
+pub const MAX_SPHERES: usize = 1024;
 
 impl ModelBuffers {
     pub fn new(model: &RobotModel, scene: &Scene) -> Self {

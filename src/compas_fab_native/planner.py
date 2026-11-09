@@ -115,6 +115,14 @@ class NativePlanner(
         links, like a floor, stay boxes).
     esdf_options
         ``voxel`` (0.02 m), ``truncation`` (0.3 m) and ``margin`` (0.01 m) of the ESDF.
+    exact_links
+        Links to check on their exact geometry inside planning too, not only in the final
+        exact check: ``None`` (default), ``"auto"`` (the links spheres represent poorly,
+        see ``poorly_fitted_links``) or a list of link names. They are tested as convex
+        hulls (conservative) against each other and the scene's boxes, on every
+        configuration the spheres find free. Useful when the final check keeps rejecting
+        paths near large flat links (a gantry carriage); it slows planning down, and the
+        hulls take free space away. Needs ``exact=True``.
     """
 
     def __init__(
@@ -124,6 +132,7 @@ class NativePlanner(
         exact: bool = True,
         obstacles: str = "boxes",
         esdf_options: Optional[dict] = None,
+        exact_links=None,
     ):
         super(NativePlanner, self).__init__()
         self._client = NativeClient()
@@ -134,6 +143,9 @@ class NativePlanner(
             raise ValueError("obstacles must be 'boxes' or 'esdf'")
         self.obstacles = obstacles
         self.esdf_options = esdf_options or {}
+        if exact_links not in (None, "auto") and not isinstance(exact_links, (list, tuple)):
+            raise ValueError("exact_links must be None, 'auto' or a list of link names")
+        self.exact_links = exact_links
         self._robot_description = None
         self._has_static_links = False
         self._static_cache = None
@@ -173,6 +185,7 @@ class NativePlanner(
         if client.core is None or tool_key != client._tool_key:
             description = json.loads(json.dumps(self._robot_description))
             add_carried_objects(description, client.robot_cell, robot_cell_state, client.group, sphere_options=self.sphere_options)
+            description["exact_links"] = self._exact_link_indices(description)
             client.core = _native().NativeCore(json.dumps(description), self._scene_json(robot_cell_state))
             self._update_esdf(robot_cell_state)
             if self.exact:
@@ -188,6 +201,28 @@ class NativePlanner(
                 client.core.set_exact_obstacles(json.dumps(exact_obstacle_meshes(client.robot_cell, robot_cell_state, group=client.group, static=self._static(robot_cell_state))))
             client._scene_key = scene_key
         client.core.set_passive_joints(self._passive_values(robot_cell_state))
+
+    @property
+    def poorly_fitted_links(self):
+        """Links whose collision spheres miss their mesh by more than
+        ``model.EXACT_LINK_MISS`` (95th percentile): the spheres cannot represent them (a
+        gantry carriage, a tall base), so collisions with them are only caught by the
+        exact check. See the ``exact_links`` option."""
+        if self._robot_description is None:
+            return []
+        names = [link["name"] for link in self._robot_description["links"]]
+        return [names[i] for i in self._robot_description.get("exact_links", [])]
+
+    def _exact_link_indices(self, description):
+        names = [link["name"] for link in description["links"]]
+        if self.exact_links is None:
+            return []
+        if self.exact_links == "auto":
+            return list(description.get("exact_links", []))
+        unknown = [n for n in self.exact_links if n not in names]
+        if unknown:
+            raise ValueError("exact_links: unknown or static links {}".format(unknown))
+        return [names.index(n) for n in self.exact_links]
 
     def _attachment_key(self, robot_cell_state):
         """Tools and rigid bodies: what they are attached to, where, and whether shown."""

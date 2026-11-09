@@ -544,6 +544,8 @@ dependencies = [
  "motion_core",
  "motion_exact",
  "pyo3",
+ "rayon",
+ "serde_json",
 ]
 
 [[package]]

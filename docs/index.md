@@ -22,7 +22,7 @@ backend API, but what it supports is limited (see below) and may change.
 | Cartesian paths in milliseconds, through the compas_fab API | Robots without a closed form search a beam of postures along the path (8 by default, `tracks`): wide, but not exhaustive |
 | Free motion in milliseconds, for any serial robot, timed under velocity and acceleration limits | No jerk limits yet |
 | Closed-form IK for UR (offset wrist) and spherical-wrist arms; numerical IK (collision-aware) for every other robot | Numerical IK finds solutions from seeds: "no solution" means none was found, not that none exists |
-| Sphere-model collision checks for thousands of configurations per millisecond, validated on exact meshes, including tools and workpieces the robot carries | Large flat links (gantry carriages) are approximated loosely; the exact check catches what the spheres miss, at the cost of slower plans |
+| Sphere-model collision checks for thousands of configurations per millisecond, validated on exact meshes, including tools and workpieces the robot carries | Large flat links (gantry carriages, tall bases) are approximated poorly by spheres (`planner.poorly_fitted_links`); the exact check catches what the spheres miss, at the cost of slower plans (`exact_links` checks them during planning too, slower still) |
 | Mesh obstacles with holes (distance fields) | Experimental: not on PyPI, built from source |
 
 ## Setup

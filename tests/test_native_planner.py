@@ -713,3 +713,38 @@ def test_cartesian_search_across_tracks(post, x, z):
     assert frames_close(_reached(planner, state, trajectory.points[-1]), b)
     _assert_free_path(planner, trajectory)
     assert all(c is None for c in planner.client.core.exact_check([p.joint_values for p in trajectory.points]))
+
+
+def test_poorly_fitted_links_are_reported():
+    planner = NativePlanner(UR5Kinematics())
+    planner.set_robot_cell(*RobotCellLibrary.ur5())
+    assert planner.poorly_fitted_links == []
+    cell, state = RobotCellLibrary.rfl()
+    planner = NativePlanner()
+    planner.set_robot_cell(cell, state, options={"group": "robot11_eaXYZ"})
+    assert {"robot11_xy_cart", "robot12_xy_cart", "bridge1"} <= set(planner.poorly_fitted_links)
+
+
+def test_exact_links_catch_what_the_spheres_miss():
+    """Configurations where the spheres find the UR5 free but its meshes collide: with the
+    links involved checked exactly in the loop, the checker sees the contact."""
+    import random
+
+    cell, state = RobotCellLibrary.ur5()
+    plain = NativePlanner(UR5Kinematics())
+    plain.set_robot_cell(cell, state)
+    core = plain.client.core
+    rng = random.Random(3)
+    configs = [[rng.uniform(-math.pi, math.pi) for _ in range(6)] for _ in range(3000)]
+    clearance = core.clearance(configs)
+    contacts = core.exact_check(configs)
+    missed = [(q, c) for q, cl, c in zip(configs, clearance, contacts) if cl > 0 and c is not None]
+    assert missed, "no missed contact to test with"
+    links = sorted({name for _, pair in missed for name in pair})
+    exact = NativePlanner(UR5Kinematics(), exact_links=links)
+    exact.set_robot_cell(cell, state)
+    assert all(c <= 0 for c in exact.client.core.clearance([q for q, _ in missed]))
+    # And the planner's own collision check (the SIMD checker with the extra test).
+    assert not any(exact.client.core.motion_free(q, q) for q, _ in missed)
+    with pytest.raises(ValueError):
+        NativePlanner(exact_links="all")

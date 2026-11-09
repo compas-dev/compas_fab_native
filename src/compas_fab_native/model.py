@@ -27,8 +27,9 @@ from compas.geometry import Frame
 from compas.geometry import Transformation
 
 JOINT_TYPES = {0: "revolute", 1: "continuous", 2: "prismatic", 3: "fixed"}
-MAX_SPHERES = 256  # per robot, in the core (layout.rs)
-DEFAULT_MAX_SPHERES = 16  # per link, see fit_sphere_sets
+MAX_SPHERES = 1024  # per robot, in the core (layout.rs)
+DEFAULT_MAX_SPHERES = 16  # per link, see robot_description
+EXACT_LINK_MISS = 0.15  # metres: links whose spheres miss more get exact checks in the loop
 
 
 def frame_to_3x4(frame) -> list:
@@ -229,7 +230,25 @@ def fit_sphere_sets(
     return [(c, r + obstacle_padding) for c, r in inscribed], inscribed
 
 
-SPHERE_CACHE_VERSION = 1  # bump when the fitting changes, to invalidate cached spheres
+def fit_miss(tris, spheres, rng, samples=2000):
+    """How far a body's surface reaches outside its spheres: the 95th percentile, over
+    points sampled on the surface, of the distance to the nearest sphere (0 inside one).
+    A good fit is within the fitting tolerance; a large flat body covered by a few
+    inscribed spheres can miss by metres."""
+    if not spheres:
+        return float("inf")
+    points = surface_points(tris, samples, rng)
+    centers = np.array([c for c, _ in spheres], dtype=float)
+    radii = np.array([r for _, r in spheres], dtype=float)
+    outside = np.full(len(points), np.inf)
+    for start in range(0, len(points), 512):
+        chunk = points[start : start + 512]
+        d = np.linalg.norm(chunk[:, None, :] - centers[None], axis=2) - radii[None]
+        outside[start : start + 512] = d.min(axis=1)
+    return float(np.percentile(np.maximum(outside, 0.0), 95))
+
+
+SPHERE_CACHE_VERSION = 2  # bump when the fitting changes, to invalidate cached spheres
 _sphere_cache = {}
 
 
@@ -249,7 +268,8 @@ def sphere_cache_dir():
 
 
 def cached_sphere_sets(tris, seed=0, **options):
-    """``fit_sphere_sets`` for one body, cached by its triangles and the options.
+    """``fit_sphere_sets`` for one body, cached by its triangles and the options, with the
+    self-collision set's ``fit_miss``: ``(obstacle spheres, self spheres, miss)``.
 
     The random stream is seeded from the mesh itself, so a body gets the same spheres
     whatever else is in the cell and in whichever order bodies are fitted. Results are kept
@@ -268,18 +288,19 @@ def cached_sphere_sets(tris, seed=0, **options):
         try:
             with open(path) as f:
                 data = json.load(f)
-            hit = tuple([(np.asarray(c, dtype=float), float(r)) for c, r in spheres] for spheres in data)
+            hit = tuple([(np.asarray(c, dtype=float), float(r)) for c, r in spheres] for spheres in data[:2]) + (float(data[2]),)
         except (OSError, ValueError, TypeError):
             hit = None  # unreadable entry: fit again and overwrite it
     if hit is None:
         rng = np.random.default_rng(int(key[:15], 16))
-        hit = fit_sphere_sets(tris, rng, **options)
+        covering, inscribed = fit_sphere_sets(tris, rng, **options)
+        hit = (covering, inscribed, fit_miss(tris, inscribed, rng))
         if path:
             try:
                 os.makedirs(folder, exist_ok=True)
                 tmp = "{}.{}.tmp".format(path, os.getpid())
                 with open(tmp, "w") as f:
-                    json.dump([[[c.tolist(), r] for c, r in spheres] for spheres in hit], f)
+                    json.dump([[[c.tolist(), r] for c, r in spheres] for spheres in hit[:2]] + [hit[2]], f)
                 os.replace(tmp, path)
             except OSError:
                 pass  # read-only home, full disk: the in-memory cache still works
@@ -289,6 +310,25 @@ def cached_sphere_sets(tris, seed=0, **options):
 
 # ---------------------------------------------------------------------------
 # Robot and scene descriptions
+
+
+def sphere_counts(geometry, sphere_options, budget):
+    """(obstacle, self) spheres per link: the default (or the options') for every link,
+    scaled down if the total exceeds ``budget``.
+
+    More spheres for larger links would help them, at a cost for every check (twice the
+    spheres on a UR5 halves the missed contacts and nearly halves the checking speed);
+    links that spheres cannot represent at all are checked on their meshes instead (see
+    ``EXACT_LINK_MISS``).
+    """
+    base = sphere_options.get("max_spheres", DEFAULT_MAX_SPHERES), sphere_options.get("max_self_spheres", DEFAULT_MAX_SPHERES)
+    counts = {i: [base[0], base[1]] for i in geometry}
+    for k in range(2):
+        total = base[k] * len(geometry)
+        if total > budget:
+            for i in counts:
+                counts[i][k] = max(1, base[k] * budget // total)
+    return counts
 
 
 def joint_limits(joint):
@@ -393,18 +433,18 @@ def robot_description(robot_cell, group=None, kinematics_solver=None, seed=0, sp
         tris = meshes_to_triangles(collision_items(link.collision))
         if len(tris):
             geometry[i] = tris
-    # Share the core's sphere budget between the links, keeping two links' worth for what
-    # the robot carries (a tool and a workpiece, see add_carried_objects).
-    per_link = max(1, (MAX_SPHERES - 2 * DEFAULT_MAX_SPHERES) // max(1, len(geometry)))
-    link_options = dict(sphere_options)
-    for key in ("max_spheres", "max_self_spheres"):
-        link_options[key] = min(link_options.get(key, DEFAULT_MAX_SPHERES), per_link)
+    # Spheres per link, within the core's budget less room for what the robot carries (a
+    # tool and a workpiece, see add_carried_objects).
+    counts = sphere_counts(geometry, sphere_options, MAX_SPHERES - 4 * DEFAULT_MAX_SPHERES)
 
-    spheres, self_spheres = [], []
+    spheres, self_spheres, exact_links = [], [], []
     for i, tris in geometry.items():
-        covering, inscribed = cached_sphere_sets(tris, seed, **link_options)
+        link_options = dict(sphere_options, max_spheres=counts[i][0], max_self_spheres=counts[i][1])
+        covering, inscribed, miss = cached_sphere_sets(tris, seed, **link_options)
         spheres += [{"link": i, "center": c.tolist(), "radius": r} for c, r in covering]
         self_spheres += [{"link": i, "center": c.tolist(), "radius": r} for c, r in inscribed]
+        if miss > EXACT_LINK_MISS:
+            exact_links.append(i)
 
     limits = []
     for name in joint_names:
@@ -424,6 +464,9 @@ def robot_description(robot_cell, group=None, kinematics_solver=None, seed=0, sp
         "links": links,
         "spheres": spheres,
         "self_spheres": self_spheres,
+        # Links the spheres approximate poorly: the core checks them on their exact
+        # meshes inside planning too (see NativePlanner, "exact links").
+        "exact_links": exact_links,
         "reference_fk": {"configs": [], "link_frames": []},
     }
 
@@ -557,9 +600,11 @@ def add_carried_objects(description, robot_cell, robot_cell_state, group, seed=0
     for name, link_name, t, tris, touch, is_tool in objects:
         link = names.index(link_name)
         tris = tris @ t[:3, :3].T + t[:3, 3]
-        covering, inscribed = cached_sphere_sets(tris, seed, **options)
+        covering, inscribed, miss = cached_sphere_sets(tris, seed, **options)
         description["spheres"] += [{"link": link, "center": c.tolist(), "radius": r} for c, r in covering]
         description["self_spheres"] += [{"link": link, "center": c.tolist(), "radius": r} for c, r in inscribed]
+        if miss > EXACT_LINK_MISS and link not in description.setdefault("exact_links", []):
+            description["exact_links"].append(link)
         touch = set(touch)
         if is_tool:
             # The closest ancestor of the end-effector link that has geometry (e.g. the wrist).

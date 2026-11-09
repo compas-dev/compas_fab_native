@@ -502,12 +502,30 @@ Follow-ups done since:
   carries only effort and velocity) as bounds 0..0, so the core locked such joints at
   zero. They now get ±2π.
 
-- **Open: big flat links.** Self-collision spheres are inscribed, and 12 of them leave
-  10-20 cm gaps at the faces of a large box like an RFL carriage, so the sphere model lets
-  robot 11's carriage slide into robot 12's; the exact check catches it, after RRT has
-  found such a path (several 0.5 s failures). The demo gives the IK seeds with the gantry
-  over the target, which avoids most of it. The fix belongs in the sphere model (more
-  spheres for large links, or boxes/capsules for self-collision).
+- **Big flat links (measured, partly addressed, still open):** sphere fits are now scored
+  (`fit_miss`: the 95th percentile of how far the surface reaches outside the spheres).
+  UR5 and Panda links: 1-2 cm. ABB IRB 4600 links: 6.5-9 cm. RFL: the bridge 0.9-1.4 m,
+  the carriages 0.4-0.6 m, the 4 m bases 0.3-0.5 m, `link_2` 0.2 m. Neither more
+  spheres (48 per link: the carriage still misses 0.7 m) nor larger inscribed radii fix
+  that; spheres cannot represent a 3 m carriage. What changed:
+  - the core's sphere cap went from 256 to 1024 (a scratch array of the CPU kernels;
+    the GPU shader does not use it), so a cell like the RFL keeps 16 spheres per link
+    instead of 11-12. Allocating spheres by link size was tried and dropped: twice the
+    spheres on a UR5 halved its missed contacts (19 to 9 of 300) but cost 1.8x in checking
+    speed and marked 9% more configurations as colliding;
+  - `NativePlanner.poorly_fitted_links` lists links that miss by more than 15 cm;
+  - `NativePlanner(exact_links="auto" | [names])` checks those links inside planning, on
+    every configuration the spheres find free, as convex hulls (parry, with a 5 mm margin:
+    its hulls can fall about 1 mm short of the mesh, found by
+    `motion_exact/tests/focus.rs`) against each other and the scene's boxes. First
+    tried on the exact meshes: RFL plans took 0.5-43 s instead of 0.2-1.3 s. With hulls
+    and bounding-sphere culling, 0.3-10 s. Off by default: on the RFL demo it is slower
+    than letting the final exact check reject paths, and the hulls of the carriages take
+    free space away.
+  The real fix is boxes (or convex pieces) as robot-side collision primitives in the
+  core's kernels: the SIMD yes/no checker, the clearance kernel, the f64 reference, the
+  IK residual (box distances and gradients) and, if kept, the GPU shader. ESDF obstacles
+  have no cheap box test. That is days of careful work, not done here.
 
 - **Multi-robot cells (found by the RFL demo):** the RFL has 44 links, more than the
   core's 32, and its spheres would exceed the 256 per robot. The description now keeps
