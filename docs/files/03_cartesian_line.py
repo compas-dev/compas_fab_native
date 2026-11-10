@@ -11,7 +11,7 @@ import time
 from compas.geometry import Frame
 
 from compas_fab.backends import UR5Kinematics
-from compas_fab.backends.native import NativePlanner
+from compas_fab_native import NativePlanner
 from compas_fab.robots import FrameWaypoints
 from compas_fab.robots import RobotCellLibrary
 from compas_fab.robots import TargetMode

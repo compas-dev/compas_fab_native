@@ -18,13 +18,13 @@ server, which re-plans.
 
 ```bash
 # once: build the page (Node >= 22) and install the websocket server
-cd native/demo/live_viewer/web
+cd demo/live_viewer/web
 npm ci
 npm run build
 pip install websockets          # into the environment with compas_fab and compas_fab_native
 
 # then
-python native/demo/live_viewer/server.py      # builds the six scenarios (~20 s), then serves
+python demo/live_viewer/server.py      # builds the six scenarios (~20 s), then serves
 # open http://127.0.0.1:8765  (?scenario=wall|post|servo|mill|ring|rfl)
 ```
 
@@ -58,7 +58,7 @@ For front-end work, run `npm run dev` in `web/` (port 5173). It proxies `/ws` to
   obstacles. The touch is a straight line of IK solutions from 15 cm off the face, with
   the cube allowed to touch the flange link for that segment only. The IK gets seeds with
   the gantry over the target first: the sphere model under-reports how close robot 11's
-  carriage is to robot 12's (see `native/SPIKE.md`, "big flat links"), and random seeds
+  carriage is to robot 12's (see `SPIKE.md`, "big flat links"), and random seeds
   can park it there, which costs failed plans.
 - `scene.py`: link and body meshes for the browser.
 - `web/src/main.ts`: the page. Clicks on cubes (`object_picked`) go to the server as `picked`. Meshes go into the viewer once, as COMPAS Protobuf `Mesh`
@@ -100,4 +100,4 @@ The robot meshes come from compas_fab's robot library:
   `abb_irb4600_support` ([ros-industrial/abb](https://github.com/ros-industrial/abb)),
   Apache-2.0.
 
-The planning algorithms are credited in `native/NOTICE`.
+The planning algorithms are credited in `NOTICE`.

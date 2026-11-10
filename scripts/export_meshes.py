@@ -2,13 +2,13 @@
 
 Usage::
 
-    python native/scripts/export_meshes.py ur5 native/fixtures/ur5_meshes.json
+    python scripts/export_meshes.py ur5 fixtures/ur5_meshes.json
 """
 
 import argparse
 import json
 
-from compas_fab.backends.native.model import exact_robot_meshes
+from compas_fab_native.model import exact_robot_meshes
 from compas_fab.robots import RobotCellLibrary
 
 

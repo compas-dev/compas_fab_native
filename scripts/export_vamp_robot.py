@@ -5,7 +5,7 @@ with a sphere decomposition of their collision geometry. Benchmarking against VA
 same spheres and the same disabled pairs keeps the comparison about planning, not about
 collision models.
 
-The output carries an `attribution` field; the robots' licenses are listed in native/NOTICE.
+The output carries an `attribution` field; the robots' licenses are listed in NOTICE.
 
 Usage: python export_vamp_robot.py <vamp>/resources/panda/panda_spherized.urdf <vamp>/resources/panda/panda.srdf fixtures/vamp_panda.json
 """
@@ -103,7 +103,7 @@ def main(urdf_path, srdf_path, out_path):
         "attribution": (
             "Converted from VAMP (https://github.com/KavrakiLab/vamp, Apache-2.0) spherized robot resources, "
             "based on robowflex_resources (https://github.com/KavrakiLab/robowflex_resources, MIT, "
-            "Copyright (c) 2020 Kavraki Lab). See native/NOTICE."
+            "Copyright (c) 2020 Kavraki Lab). See NOTICE."
         ),
         "joint_names": joint_names,
         "joint_limits": joint_limits,

@@ -24,7 +24,7 @@ Cephes, MotionBenchMaker) are credited in [`NOTICE`](NOTICE), with their license
 [`licenses/`](licenses); the wheel ships both.
 
 ```
-native/
+compas_fab_native/
   scripts/export_robot.py       RobotCellLibrary robot -> fixture: kinematic tree, link spheres, reference FK
   scripts/baseline_python.py    compas_robots FK and PyBullet check_collision on the same robot + scene
   fixtures/ur5.json             UR5: 12 links, 6 dof, 32 spheres, 50 reference configurations
@@ -39,17 +39,17 @@ native/
   fixtures/vamp_*.json          VAMP's spherized Panda and UR5 (scripts/export_vamp_robot.py)
   scripts/vamp_*.py             parity, path checks and planning on VAMP's side (run in a VAMP venv)
   crates/motion_py              PyO3 extension `compas_fab_native` (NativeCore)
-  pyproject.toml                maturin build of the extension: `pip install ./native` (abi3 wheel, Python >= 3.9)
+  pyproject.toml                maturin build of the extension: `pip install .` (abi3 wheel, Python >= 3.9)
   scripts/baseline_cartesian.py compas_fab's Cartesian planners vs NativePlanner on the same path
   results/                      raw numbers from the runs below
   demo/live_viewer/             live browser demo: Python websocket server + compas_threejs_ts page (README there)
 
-src/compas_fab/backends/native  NativePlanner: the core as a compas_fab backend (model.py builds the
+  src/compas_fab_native         NativePlanner: the core as a compas_fab backend (model.py builds the
                                 robot/scene descriptions from a RobotCell, planner.py the features)
-tests/backends/native           backend tests (skipped unless compas_fab_native is importable)
+  tests                         backend tests
 ```
 
-`scripts/export_robot.py` predates `compas_fab.backends.native.model` and keeps its own
+`scripts/export_robot.py` predates `compas_fab_native.model` and keeps its own
 copy of the fitting code so `fixtures/ur5.json` (and the numbers below) stay reproducible.
 
 The operation in every backend: configurations (SoA, `q[j * B + b]`) -> batched FK ->
@@ -60,7 +60,6 @@ gradient, per sphere -> per-configuration minimum. Layouts are documented in
 Run:
 
 ```bash
-cd native
 cargo test --release                      # oracle chain: compas_robots -> f64 -> f32 CPU
 cargo run --release --bin motion_bench -- --out results/<machine>.json
 cargo run --release --bin ci_bench -- bench.json                          # what CI measures
@@ -68,10 +67,10 @@ python scripts/baseline_python.py ur5 fixtures/scene_boxes.json results/baseline
 cargo run --release --bin compare_verdicts -- results/baseline_python.json
 
 # Python extension + backend, from compas_fab's venv
-maturin develop --release           # or, from the repository root: pip install ./native
-cd .. && python -m pytest tests/backends/native
-python native/scripts/baseline_cartesian.py native/fixtures/scene_boxes.json native/results/baseline_cartesian.json
-for f in docs/backends/native/files/*.py; do python $f; done   # the examples
+maturin develop --release           # or: pip install .
+python -m pytest tests
+python scripts/baseline_cartesian.py fixtures/scene_boxes.json results/baseline_cartesian.json
+for f in docs/files/*.py; do python $f; done   # the examples
 ```
 
 VAMP comparison (VAMP 0.6.4 built from source in its own venv, `<vamp>` its checkout;
@@ -331,10 +330,10 @@ parallel per block). The CPU kernels query it next to the boxes. GPU kernels don
 
 ### NativePlanner (compas_fab backend)
 
-`compas_fab.backends.native.NativePlanner(UR5Kinematics())` implements
+`compas_fab_native.NativePlanner(UR5Kinematics())` implements
 `set_robot_cell(_state)`, `forward_kinematics`, `iter_inverse_kinematics`,
 `check_collision` and `plan_cartesian_motion` (`TargetMode.ROBOT` and `TOOL`, option
-`free_axis_samples`, `exact_check`). Tests (`tests/backends/native`) check FK against
+`free_axis_samples`, `exact_check`). Tests (`tests`) check FK against
 compas_robots (with a moved robot base), IK round trips, collisions with a box, Cartesian
 paths in robot and tool mode (UR5 with the cone tool, free axis), and the exact pass. The rest of the compas_fab
 suite is unaffected (195 passed, 22 skipped).
@@ -563,8 +562,8 @@ Follow-ups done since:
   paths, timing for Cartesian trajectories (`core.time_parameterize` is ready for it).
 - `fixtures/vamp_*.json` are derived from VAMP's resources (Apache-2.0, from
   robowflex_resources): the attribution question of the PRD applies to them.
-- Packaging: `native/pyproject.toml` builds an abi3 wheel with maturin (`compas_fab_native`,
-  a separate distribution from the same repository, as pydantic does with pydantic-core).
+- Packaging: `pyproject.toml` builds an abi3 wheel with maturin (`compas_fab_native`,
+  a separate distribution in its own repository, as pydantic does with pydantic-core).
   Not yet: wheels for all platforms in the release workflow, and `compas_fab[native]`.
 - Sphere fitting still runs in Python (trimesh, at `set_robot_cell`: ~1.7 s for a UR5);
   moving it to the core would drop the trimesh/rtree/scipy dependencies.

@@ -49,6 +49,7 @@ from compas_fab.robots import PointAxisTarget
 from compas_fab.robots import PointAxisWaypoints
 from compas_fab.robots import TargetMode
 
+from ._core import NativeCore
 from .model import add_carried_objects
 from .model import exact_obstacle_meshes
 from .model import exact_robot_meshes
@@ -61,14 +62,6 @@ from .model import robot_description
 from .model import static_obstacles
 
 __all__ = ["NativeClient", "NativePlanner"]
-
-
-def _native():
-    try:
-        import compas_fab_native
-    except ImportError as e:
-        raise ImportError("The native backend needs the compas_fab_native extension (`pip install ./native`).") from e
-    return compas_fab_native
 
 
 def _frame_from_3x4(values) -> Frame:
@@ -186,7 +179,7 @@ class NativePlanner(
             description = json.loads(json.dumps(self._robot_description))
             add_carried_objects(description, client.robot_cell, robot_cell_state, client.group, sphere_options=self.sphere_options)
             description["exact_links"] = self._exact_link_indices(description)
-            client.core = _native().NativeCore(json.dumps(description), self._scene_json(robot_cell_state))
+            client.core = NativeCore(json.dumps(description), self._scene_json(robot_cell_state))
             self._update_esdf(robot_cell_state)
             if self.exact:
                 client.core.set_exact_meshes(

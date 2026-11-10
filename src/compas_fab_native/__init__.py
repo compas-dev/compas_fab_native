@@ -1,10 +1,11 @@
-"""Native (Rust) motion core backend: spike, see ``native/SPIKE.md``.
+"""Native (Rust) motion core backend for compas_fab: spike, see ``SPIKE.md``.
 
-The planner needs the ``compas_fab_native`` extension module (``pip install ./native``,
-built with maturin from ``native/crates/motion_py``); importing this package does not.
+``NativeCore`` comes from the compiled extension ``compas_fab_native._core``, built with
+maturin from ``crates/motion_py``.
 """
 
+from ._core import NativeCore
 from .planner import NativeClient
 from .planner import NativePlanner
 
-__all__ = ["NativeClient", "NativePlanner"]
+__all__ = ["NativeClient", "NativeCore", "NativePlanner"]

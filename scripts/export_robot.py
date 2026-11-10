@@ -16,7 +16,7 @@ conservative and only meant to give the kernels a realistic sphere count.
 
 Usage::
 
-    python native/scripts/export_robot.py ur5 native/fixtures/ur5.json
+    python scripts/export_robot.py ur5 fixtures/ur5.json
 """
 
 import argparse

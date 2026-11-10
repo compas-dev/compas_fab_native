@@ -23,7 +23,7 @@ import compas_fab
 from compas_fab.backends import UR5Kinematics
 from compas_fab.backends.exceptions import BackendError
 from compas_fab.backends.kinematics.exceptions import CartesianMotionError
-from compas_fab.backends.native import NativePlanner
+from compas_fab_native import NativePlanner
 from compas_fab.robots import ConfigurationTarget
 from compas_fab.robots import FrameTarget
 from compas_fab.robots import FrameWaypoints

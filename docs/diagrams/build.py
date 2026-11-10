@@ -2,9 +2,9 @@
 
 Each diagram is written twice next to this file: as a standalone HTML page
 (``<slug>.html``, for viewing on its own) and as an SVG (``<slug>.svg``, embedded in
-``docs/backends/native/how-it-works.md``). Edit the diagram functions below and run::
+``docs/how-it-works.md``). Edit the diagram functions below and run::
 
-    python docs/backends/native/diagrams/build.py
+    python docs/diagrams/build.py
 
 Visual system: the editorial style of diagram-design
 (https://github.com/cathrynlavery/diagram-design, default skin): white-smoke paper,
@@ -236,8 +236,8 @@ def architecture():
         arrow("M 648,388 V 360"),
         # nodes
         node(36, 100, 156, 64, "Your script", "or Grasshopper", kind="input"),
-        node(272, 100, 216, 64, "NativePlanner", "backends/native/planner.py", tag="BACKEND", kind="focal"),
-        node(552, 100, 192, 64, "Robot model", "backends/native/model.py", tag="PY"),
+        node(272, 100, 216, 64, "NativePlanner", "compas_fab_native/planner.py", tag="BACKEND", kind="focal"),
+        node(552, 100, 192, 64, "Robot model", "compas_fab_native/model.py", tag="PY"),
         node(792, 100, 168, 64, "Sphere cache", "memory + disk", kind="store"),
         node(272, 292, 216, 64, "NativeCore", "crates/motion_py", tag="PYO3"),
         node(552, 292, 192, 64, "motion_core", "kinematics · checks · plans", tag="RUST"),

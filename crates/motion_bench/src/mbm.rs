@@ -3,7 +3,7 @@
 //! cylinders become capsules, except in the `box` scenario, where they become boxes.
 //!
 //! The problems are MotionBenchMaker's (Chamzas et al., RA-L 2022, BSD-3-Clause, Rice
-//! University), read from a local VAMP checkout (Apache-2.0); not included. See `native/NOTICE`.
+//! University), read from a local VAMP checkout (Apache-2.0); not included. See `NOTICE`.
 
 use motion_core::check::Obstacles;
 use motion_core::{load_robot, RobotModel};

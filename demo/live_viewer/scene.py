@@ -7,9 +7,9 @@ from compas.geometry import Box
 from compas.geometry import Frame
 from compas.geometry import Transformation
 
-from compas_fab.backends.native.model import collision_items
-from compas_fab.backends.native.model import meshes_to_triangles
-from compas_fab.backends.native.model import tool_triangles
+from compas_fab_native.model import collision_items
+from compas_fab_native.model import meshes_to_triangles
+from compas_fab_native.model import tool_triangles
 
 # Link colours, by link name (fallback: the first entry).
 PALETTES = {

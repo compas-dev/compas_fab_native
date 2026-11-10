@@ -14,7 +14,7 @@ from compas.geometry import Torus
 
 from compas_fab.backends import UR5Kinematics
 from compas_fab.backends.kinematics.exceptions import CartesianMotionError
-from compas_fab.backends.native import NativePlanner
+from compas_fab_native import NativePlanner
 from compas_fab.robots import FrameWaypoints
 from compas_fab.robots import RigidBody
 from compas_fab.robots import RigidBodyState

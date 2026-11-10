@@ -27,36 +27,36 @@ backend API, but what it supports is limited (see below) and may change.
 
 ## Setup
 
-From a compas_fab checkout, with a [Rust toolchain](https://rustup.rs) installed:
+From a checkout of this repository, with a [Rust toolchain](https://rustup.rs) installed:
 
 ```bash
-pip install ./native
+pip install .
 ```
 
 This builds the `compas_fab_native` extension with maturin. For development,
-`maturin develop --release`, run inside `native/`, rebuilds it in place.
+`maturin develop --release` rebuilds it in place.
 
 ## First example
 
 Forward and inverse kinematics on a UR5:
 
 ```python
---8<-- "docs/backends/native/files/01_kinematics.py"
+--8<-- "docs/files/01_kinematics.py"
 ```
 
 ## More examples
 
 Each example builds on the previous one and explains what the planner does as it goes.
 
-- [`02_collision_checking.py`](native/files/02_collision_checking.py){: download="02_collision_checking.py" }: the sphere model, checking 10,000 configurations at once, and how spheres compare with exact meshes
-- [`03_cartesian_line.py`](native/files/03_cartesian_line.py){: download="03_cartesian_line.py" }: a 100-waypoint line, what the planner does, and starting from the current configuration
-- [`04_tool_and_free_axis.py`](native/files/04_tool_and_free_axis.py){: download="04_tool_and_free_axis.py" }: a spiral toolpath that only works when the tool may turn about its own axis
-- [`05_mesh_obstacles.py`](native/files/05_mesh_obstacles.py){: download="05_mesh_obstacles.py" }: plunging through a ring, impossible with bounding boxes, possible with a distance field
-- [`06_free_motion.py`](native/files/06_free_motion.py){: download="06_free_motion.py" }: free motion around obstacles, to configurations, frames and point-axis targets, timed under the joint limits, on a UR5 and a 7-axis Panda
+- [`02_collision_checking.py`](files/02_collision_checking.py){: download="02_collision_checking.py" }: the sphere model, checking 10,000 configurations at once, and how spheres compare with exact meshes
+- [`03_cartesian_line.py`](files/03_cartesian_line.py){: download="03_cartesian_line.py" }: a 100-waypoint line, what the planner does, and starting from the current configuration
+- [`04_tool_and_free_axis.py`](files/04_tool_and_free_axis.py){: download="04_tool_and_free_axis.py" }: a spiral toolpath that only works when the tool may turn about its own axis
+- [`05_mesh_obstacles.py`](files/05_mesh_obstacles.py){: download="05_mesh_obstacles.py" }: plunging through a ring, impossible with bounding boxes, possible with a distance field
+- [`06_free_motion.py`](files/06_free_motion.py){: download="06_free_motion.py" }: free motion around obstacles, to configurations, frames and point-axis targets, timed under the joint limits, on a UR5 and a 7-axis Panda
 
 ## How it works, in short
 
-The full explanation, with diagrams, is in [How it works](native/how-it-works.md).
+The full explanation, with diagrams, is in [How it works](how-it-works.md).
 
 
 1. `set_robot_cell` fits spheres inside every link mesh and sends the robot, its meshes and
@@ -88,8 +88,8 @@ The full explanation, with diagrams, is in [How it works](native/how-it-works.md
    velocity and acceleration limits allow, starting and ending at rest.
 
 Design notes, measurements and open issues are in
-[`native/SPIKE.md`](https://github.com/compas-dev/compas_fab/blob/spike/native-core/native/SPIKE.md).
+[`SPIKE.md`](../SPIKE.md).
 
 ## API reference
 
-- `compas_fab.backends.native.NativePlanner`
+- `compas_fab_native.NativePlanner`

@@ -10,7 +10,7 @@
 //!    path: a backward pass computes the controllable path-velocity intervals, a forward pass
 //!    takes the largest admissible path acceleration at each step. Start and end at rest.
 //!
-//! Implemented from the papers (see `native/NOTICE`). Acceleration is piecewise constant
+//! Implemented from the papers (see `NOTICE`). Acceleration is piecewise constant
 //! along the grid: jerk is not limited.
 
 /// Limits and settings. `max_velocity` and `max_acceleration` are per joint (rad/s, rad/s²

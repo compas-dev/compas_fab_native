@@ -1,1 +1,11 @@
 target/
+dist/
+.venv/
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+*.dylib
+.pytest_cache/
+.ruff_cache/
+.DS_Store

@@ -1,8 +1,8 @@
-compas_fab native motion core
+compas_fab_native
 Copyright (c) 2018-2026 Gramazio Kohler Research
-Licensed under the MIT License (see LICENSE, a copy of the repository's ../LICENSE).
+Licensed under the MIT License (see LICENSE).
 
-This directory contains code ported from, data derived from, and algorithms that closely
+This repository contains code ported from, data derived from, and algorithms that closely
 follow the third-party works listed below. Their licenses are in `licenses/`.
 
 
@@ -13,7 +13,8 @@ follow the third-party works listed below. Their licenses are in `licenses/`.
 
    Used in: crates/motion_core/src/ik.rs (`offset_wrist_ik`, `offset_wrist_fk`): a Rust port
    of the closed-form inverse and forward kinematics of `ur_kin.cpp`, by way of compas_fab's
-   `offset_wrist.py`.
+   `offset_wrist.py` (https://github.com/compas-dev/compas_fab, MIT License, Copyright (c)
+   2018-2026 Gramazio Kohler Research).
 
 
 2. VAMP: Vector-Accelerated Motion Planning

@@ -4,7 +4,7 @@ The native planner is a compas_fab backend like any other: you give it a RobotCe
 ask it for kinematics, collision checks and paths. The difference is underneath: the work
 happens in a compiled (Rust) core instead of Python, PyBullet or ROS.
 
-Install the core once with ``pip install ./native`` from a compas_fab checkout.
+Install the core once with ``pip install .`` from a compas_fab checkout.
 """
 
 import time
@@ -12,7 +12,7 @@ import time
 from compas.geometry import Frame
 
 from compas_fab.backends import UR5Kinematics
-from compas_fab.backends.native import NativePlanner
+from compas_fab_native import NativePlanner
 from compas_fab.robots import FrameTarget
 from compas_fab.robots import RobotCellLibrary
 from compas_fab.robots import TargetMode

@@ -11,7 +11,7 @@
 //!   Copyright (c) 2013, Georgia Institute of Technology. All rights reserved.
 //!   Author: Kelsey Hawkins. Software License Agreement (BSD License): redistribution and
 //!   use in source and binary forms, with or without modification, are permitted provided
-//!   that the conditions in `native/licenses/ur_kinematics-BSD-3-Clause.txt` are met.
+//!   that the conditions in `licenses/ur_kinematics-BSD-3-Clause.txt` are met.
 //!   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
 //!   EXPRESS OR IMPLIED WARRANTIES ARE DISCLAIMED (see that file for the full text).
 

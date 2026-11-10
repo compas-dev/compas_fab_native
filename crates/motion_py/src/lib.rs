@@ -1,7 +1,7 @@
 //! Python bindings for the native motion core (spike).
 //!
 //! A thin layer: the robot model and scene come in as JSON (built on the Python side from
-//! a compas_fab RobotCell, see `compas_fab.backends.native`), queries run in Rust with the
+//! a compas_fab RobotCell, see `compas_fab_native`), queries run in Rust with the
 //! GIL released. Transforms cross as flat lists of 12 floats (3x4, row-major).
 
 use std::collections::HashMap;
@@ -385,7 +385,7 @@ impl NativeCore {
     }
 
     /// Enable the exact final pass: collision meshes per link (link coordinates) and obstacle
-    /// meshes (robot coordinates), as produced by `compas_fab.backends.native.model`.
+    /// meshes (robot coordinates), as produced by `compas_fab_native.model`.
     fn set_exact_meshes(
         &mut self,
         robot_meshes_json: &str,
@@ -877,7 +877,7 @@ impl NativeCore {
 }
 
 #[pymodule]
-fn compas_fab_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NativeCore>()?;
     Ok(())
 }

@@ -11,7 +11,7 @@ can be compared against them (``compare_verdicts``).
 
 Usage::
 
-    python native/scripts/baseline_python.py ur5 native/fixtures/scene_boxes.json native/results/baseline_python.json
+    python scripts/baseline_python.py ur5 fixtures/scene_boxes.json results/baseline_python.json
 """
 
 import argparse

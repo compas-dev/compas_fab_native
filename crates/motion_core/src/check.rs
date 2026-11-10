@@ -16,7 +16,7 @@
 //!
 //! Attribution: the motion "rake", the sphere/cuboid test and the bounding-sphere-first,
 //! early-exit structure follow VAMP (https://github.com/KavrakiLab/vamp, Apache-2.0); the
-//! sine/cosine polynomials are Cephes' (Stephen L. Moshier). See `native/NOTICE`.
+//! sine/cosine polynomials are Cephes' (Stephen L. Moshier). See `NOTICE`.
 
 use std::mem::MaybeUninit;
 use std::sync::Arc;

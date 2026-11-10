@@ -204,7 +204,7 @@ def fit_sphere_sets(
     """(obstacle, self) sphere lists for one body given as triangles.
 
     Self-collision always uses spheres inscribed in the mesh. For obstacles there are two
-    choices (measured on a UR5 against PyBullet and exact meshes, see native/SPIKE.md):
+    choices (measured on a UR5 against PyBullet and exact meshes, see SPIKE.md):
 
     * ``"inscribed"`` (default): the inscribed spheres grown by ``obstacle_padding``.
       ~1-2% false alarms, misses a few real contacts per thousand configurations at thin

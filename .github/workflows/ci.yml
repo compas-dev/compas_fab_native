@@ -1,26 +1,16 @@
-name: native
+name: ci
 
-# Rust core of the native backend (native/): lint, tests, Python extension, and CPU benchmarks
+# Rust core and Python backend: lint, tests, Python extension, and CPU benchmarks
 # on every commit. Benchmark results are in the job summary and uploaded as an artifact
 # (bench-<sha>); on pull requests they are compared against the base commit on the same runner.
 
 on:
   push:
     branches: [main]
-    paths:
-      - "native/**"
-      - "src/compas_fab/backends/native/**"
-      - "tests/backends/native/**"
-      - ".github/workflows/native.yml"
   pull_request:
-    paths:
-      - "native/**"
-      - "src/compas_fab/backends/native/**"
-      - "tests/backends/native/**"
-      - ".github/workflows/native.yml"
 
 concurrency:
-  group: native-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -36,20 +26,14 @@ jobs:
         os: [ubuntu-24.04, macos-latest, windows-2022]
     steps:
       - uses: actions/checkout@v6
-      - name: Rust toolchain (pinned in native/rust-toolchain.toml)
-        working-directory: native
+      - name: Rust toolchain (pinned in rust-toolchain.toml)
         run: cargo --version
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: native
       - name: Format
-        working-directory: native
         run: cargo fmt --all --check
       - name: Clippy
-        working-directory: native
         run: cargo clippy --workspace --all-targets --release -- -D warnings
       - name: Rust tests
-        working-directory: native
         # motion_py links against Python as an extension module; it is tested through pytest.
         run: cargo test --workspace --exclude motion_py --release
       - uses: actions/setup-python@v5
@@ -60,12 +44,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install "maturin>=1.9,<2"
-          # Not [dev]: pybullet has no macOS wheels, and the native tests do not need it.
-          python -m pip install -e . pytest
-          (cd native && maturin build --release --out ../dist)
-          python -m pip install dist/*.whl
+          maturin build --release --out dist
+          python -m pip install dist/*.whl pytest
       - name: Python tests
-        run: python -m pytest tests/backends/native -v
+        run: python -m pytest tests -v
 
   bench:
     runs-on: ubuntu-24.04
@@ -73,21 +55,17 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Rust toolchain (pinned in native/rust-toolchain.toml)
-        working-directory: native
+      - name: Rust toolchain (pinned in rust-toolchain.toml)
         run: cargo --version
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: native
       - name: Benchmark this commit
-        working-directory: native
-        run: cargo run --release -p motion_bench --bin ci_bench -- ../bench.json
+        run: cargo run --release -p motion_bench --bin ci_bench -- bench.json
       - name: Benchmark the base commit
         if: github.event_name == 'pull_request'
         run: |
           git worktree add ../base "${{ github.event.pull_request.base.sha }}"
-          if [ -f ../base/native/crates/motion_bench/src/bin/ci_bench.rs ]; then
-            (cd ../base/native && cargo run --release -p motion_bench --bin ci_bench -- "$GITHUB_WORKSPACE/bench_base.json")
+          if [ -f ../base/crates/motion_bench/src/bin/ci_bench.rs ]; then
+            (cd ../base && cargo run --release -p motion_bench --bin ci_bench -- "$GITHUB_WORKSPACE/bench_base.json")
           else
             echo "The base commit has no ci_bench; nothing to compare against."
           fi
@@ -97,9 +75,9 @@ jobs:
             echo "## Native core benchmarks"
             echo
             if [ -f bench_base.json ]; then
-              python3 native/scripts/compare_bench.py bench.json bench_base.json
+              python3 scripts/compare_bench.py bench.json bench_base.json
             else
-              python3 native/scripts/compare_bench.py bench.json
+              python3 scripts/compare_bench.py bench.json
             fi
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v5

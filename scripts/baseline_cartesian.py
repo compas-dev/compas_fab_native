@@ -10,7 +10,7 @@ Writes the waypoints (so the native planner plans exactly the same path) and tim
 
 Usage::
 
-    python native/scripts/baseline_cartesian.py native/fixtures/scene_boxes.json native/results/baseline_cartesian.json
+    python scripts/baseline_cartesian.py fixtures/scene_boxes.json results/baseline_cartesian.json
 """
 
 import argparse
@@ -130,7 +130,7 @@ def main():
             print("{:<26} {:.3f} s, {} waypoints -> {} points {}".format(name, t, len(wps.target_frames), results[name]["points"], err or ""))
 
     try:
-        from compas_fab.backends.native import NativePlanner
+        from compas_fab_native import NativePlanner
 
         cell, state = cell_with_scene(scene)
         planner = NativePlanner(UR5Kinematics())

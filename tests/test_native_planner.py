@@ -8,11 +8,9 @@ from compas.geometry import Box
 from compas.geometry import Frame
 from compas.geometry import Transformation
 
-pytest.importorskip("compas_fab_native")
-
 from compas_fab.backends import CollisionCheckError  # noqa: E402
 from compas_fab.backends import UR5Kinematics  # noqa: E402
-from compas_fab.backends.native import NativePlanner  # noqa: E402
+from compas_fab_native import NativePlanner  # noqa: E402
 from compas_fab.robots import FrameTarget  # noqa: E402
 from compas_fab.robots import FrameWaypoints  # noqa: E402
 from compas_fab.robots import PointAxisTarget  # noqa: E402
@@ -343,7 +341,7 @@ def test_plan_motion_is_timed_within_the_joint_limits(ur5_wall):
 
 def test_a_tilted_cube_gets_a_tight_box():
     """Principal axes are arbitrary for a cube; the body's own frame gives the tight box."""
-    from compas_fab.backends.native.model import obstacle_boxes
+    from compas_fab_native.model import obstacle_boxes
 
     cell, state = RobotCellLibrary.ur5()
     cell.rigid_body_models["cube"] = RigidBody.from_mesh(Box(0.3, 0.3, 0.3).to_mesh(triangulated=True))
@@ -556,7 +554,7 @@ def test_gantry_robot_ik_motion_and_cartesian(rfl):
 
 
 def test_sphere_fit_is_cached_in_memory_and_on_disk(tmp_path, monkeypatch):
-    from compas_fab.backends.native import model
+    from compas_fab_native import model
 
     monkeypatch.setenv("COMPAS_FAB_NATIVE_CACHE", str(tmp_path))
     monkeypatch.setattr(model, "_sphere_cache", {})

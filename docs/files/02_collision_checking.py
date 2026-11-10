@@ -14,7 +14,7 @@ from compas.geometry import Frame
 
 from compas_fab.backends import CollisionCheckError
 from compas_fab.backends import UR5Kinematics
-from compas_fab.backends.native import NativePlanner
+from compas_fab_native import NativePlanner
 from compas_fab.robots import RigidBody
 from compas_fab.robots import RigidBodyState
 from compas_fab.robots import RobotCellLibrary
