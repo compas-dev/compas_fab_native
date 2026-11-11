@@ -1,0 +1,104 @@
+site_name: COMPAS FAB Native
+site_url: https://compas.dev/compas_fab_native/
+repo_url: https://github.com/compas-dev/compas_fab_native
+repo_name: compas-dev/compas_fab_native
+edit_uri: blob/main/docs/
+
+copyright: Copyright &copy; 2018 - 2026, Gramazio Kohler Research
+
+exclude_docs: |
+  diagrams/build.py
+  **/__pycache__/
+
+extra:
+  homepage: https://compas.dev/compas_fab_native/
+  version:
+    provider: mike
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Roboto
+    code: Roboto Mono
+  logo: _logo/compas_logo_white_transparent.png
+  favicon: _logo/favicon.ico
+  features:
+    - content.code.copy
+    - navigation.footer
+    - navigation.indexes
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - toc.follow
+
+extra_css:
+  - assets/stylesheets/custom.css
+
+markdown_extensions:
+  - abbr
+  - attr_list
+  - admonition
+  - callouts:
+      strip_period: no
+  - footnotes
+  - md_in_html
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.snippets:
+      check_paths: true
+  - toc:
+      permalink: "¤"
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [src]
+          inventories:
+            - https://docs.python.org/3/objects.inv
+            - https://compas.dev/compas/latest/objects.inv
+            - https://compas.dev/compas_fab/latest/objects.inv
+          options:
+            allow_inspection: true
+            docstring_options:
+              ignore_init_summary: true
+            docstring_style: numpy
+            docstring_section_style: list
+            filters: public
+            heading_level: 2
+            inherited_members: false
+            merge_init_into_class: true
+            separate_signature: true
+            show_bases: true
+            show_root_heading: true
+            show_root_full_path: true
+            show_signature_annotations: true
+            show_source: false
+            signature_crossrefs: true
+
+nav:
+  - Home: index.md
+  - How it works: how-it-works.md
+  - API reference: api.md
+  - Changelog: changelog.md
+  - License: license.md

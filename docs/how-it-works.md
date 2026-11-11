@@ -227,5 +227,5 @@ accepts them, and they differ from the ones already found.
 | Time parameterization | | `motion_core::timing` |
 
 Design notes, measurements and open issues are in
-[`SPIKE.md`](../SPIKE.md).
+[`SPIKE.md`](https://github.com/compas-dev/compas_fab_native/blob/main/SPIKE.md).
 Credits for ported code and the algorithms followed are in `NOTICE`.

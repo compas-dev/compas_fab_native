@@ -1,7 +1,7 @@
 # Native (experimental)
 
 A planning backend whose work happens in a compiled core (Rust) inside the Python process:
-no Docker, no PyBullet, no ROS. It is an early spike: the API is the usual compas_fab
+no Docker, no PyBullet, no ROS. It is experimental: the API is the usual compas_fab
 backend API, but what it supports is limited (see below) and may change.
 
 ## When to use
@@ -23,18 +23,18 @@ backend API, but what it supports is limited (see below) and may change.
 | Free motion in milliseconds, for any serial robot, timed under velocity and acceleration limits | No jerk limits yet |
 | Closed-form IK for UR (offset wrist) and spherical-wrist arms; numerical IK (collision-aware) for every other robot | Numerical IK finds solutions from seeds: "no solution" means none was found, not that none exists |
 | Sphere-model collision checks for thousands of configurations per millisecond, validated on exact meshes, including tools and workpieces the robot carries | Large flat links (gantry carriages, tall bases) are approximated poorly by spheres (`planner.poorly_fitted_links`); the exact check catches what the spheres miss, at the cost of slower plans (`exact_links` checks them during planning too, slower still) |
-| Mesh obstacles with holes (distance fields) | Experimental: not on PyPI, built from source |
+| Mesh obstacles with holes (distance fields) | Experimental: the API may change between minor versions |
 
 ## Setup
 
-From a checkout of this repository, with a [Rust toolchain](https://rustup.rs) installed:
-
 ```bash
-pip install .
+pip install compas_fab_native
 ```
 
-This builds the `compas_fab_native` extension with maturin. For development,
-`maturin develop --release` rebuilds it in place.
+Wheels are available for Linux (x86_64), macOS (Intel and Apple Silicon) and Windows (x64),
+for Python 3.9 and later. Elsewhere, pip builds the extension from source, which needs a
+[Rust toolchain](https://rustup.rs). From a checkout of the repository, `pip install -e .`
+builds it in place.
 
 ## First example
 
@@ -88,8 +88,8 @@ The full explanation, with diagrams, is in [How it works](how-it-works.md).
    velocity and acceleration limits allow, starting and ending at rest.
 
 Design notes, measurements and open issues are in
-[`SPIKE.md`](../SPIKE.md).
+[`SPIKE.md`](https://github.com/compas-dev/compas_fab_native/blob/main/SPIKE.md).
 
 ## API reference
 
-- `compas_fab_native.NativePlanner`
+See the [API reference](api.md).
