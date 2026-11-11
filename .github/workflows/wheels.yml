@@ -1,19 +1,27 @@
 name: wheels
 
-# Builds the compas_fab_native extension as release wheels (abi3: one wheel per platform
-# for every Python >= 3.9) and tests each wheel on the oldest and newest Python we support.
-# Python 3.9 is what Rhino 8 ships. Nothing is published: the wheels are uploaded as
-# artifacts (native-wheel-<platform>).
+# Builds the compas_fab_native extension as wheels (abi3: one wheel per platform for every
+# Python >= 3.9) and a source distribution, and tests each wheel on the oldest and newest
+# Python we support (3.9 is what Rhino 8 ships) and the source distribution built from
+# scratch. Artifacts: wheel-<platform>, sdist.
+#
+# release.yml calls this workflow to build what it publishes.
 
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 concurrency:
-  group: wheels-${{ github.ref }}
+  # github.workflow is the caller's name when called, so a release never cancels (or is
+  # cancelled by) the regular run on the same commit.
+  group: ${{ github.workflow }}-wheels-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -37,6 +45,8 @@ jobs:
             manylinux: ""
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Build the wheel
         uses: PyO3/maturin-action@v1
         with:
@@ -45,8 +55,24 @@ jobs:
           args: --release --out dist
       - uses: actions/upload-artifact@v5
         with:
-          name: native-wheel-${{ matrix.platform }}
+          name: wheel-${{ matrix.platform }}
           path: dist/*.whl
+
+  sdist:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Build the source distribution
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v5
+        with:
+          name: sdist
+          path: dist/*.tar.gz
 
   test:
     name: test (${{ matrix.platform }}, py${{ matrix.python }})
@@ -66,18 +92,44 @@ jobs:
             os: windows-2022
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
       - uses: actions/download-artifact@v5
         with:
-          name: native-wheel-${{ matrix.platform }}
+          name: wheel-${{ matrix.platform }}
           path: dist
       - name: Install the wheel
         shell: bash
         run: |
           python -m pip install --upgrade pip
           python -m pip install dist/*.whl pytest
-          python -c "import compas_fab_native, sys; print(sys.version, compas_fab_native.__file__)"
-      - name: Native tests on the installed wheel
-        run: python -m pytest tests -q
+          python -c "import compas_fab_native, sys; print(sys.version, compas_fab_native.__version__, compas_fab_native.__file__)"
+      - name: Tests on the installed wheel
+        # Not from the checkout's src/: the tests must import the installed wheel.
+        run: python -m pytest tests -q -p no:cacheprovider
+
+  test-sdist:
+    name: test (sdist, py3.12)
+    needs: sdist
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v5
+        with:
+          name: sdist
+          path: dist
+      - name: Build and install from the source distribution
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install dist/*.tar.gz pytest
+      - name: Tests on the installed package
+        run: python -m pytest tests -q -p no:cacheprovider
