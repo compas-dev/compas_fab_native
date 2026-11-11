@@ -281,7 +281,7 @@ Line over the table, 100 waypoints, UR5, same scene and waypoints for every plan
 | Rust core, 12 tool-axis samples (9,600 IK nodes) | 3.9 ms | not available in compas_fab |
 | **`NativePlanner.plan_cartesian_motion`** (through the compas_fab API) | **1.6 ms** | ~190× the fixed analytical planner |
 | `NativePlanner`, 12 tool-axis samples | 5.4 ms | |
-| `NativePlanner.set_robot_cell` (sphere fitting, once per cell) | 1.7 s | trimesh signed distance; cacheable |
+| `NativePlanner.set_robot_cell` (sphere fitting, once per cell) | 0.08 s | fitting in the core, without the cache (1.7 s with trimesh in Python before); cacheable |
 
 Through the API, half of the first version's 10 ms went to compas_fab's
 `Target.normalized_to_meters` (deep-copies all waypoints even at scale 1) and a
@@ -555,8 +555,6 @@ Follow-ups done since:
   `AnalyticalKinematicsPlanner.plan_cartesian_motion` with frame waypoints always raise
   `BackendTargetNotSupportedError`, and the tests that would catch it are commented out.
   Fixed with regression tests on the branch `fix/analytical-cartesian-frame-targets`.
-- External axes, 7-DoF redundancy sampling for frame targets and Cartesian paths.
-- Attached workpieces are ignored by the backend; tools are supported.
 - Free-space: jerk limits (timing is velocity- and acceleration-limited), the exact-mesh
   check dominates `plan_motion` (about 2-5 ms with timing), FCIT* or AORRTC for better
   paths, timing for Cartesian trajectories (`core.time_parameterize` is ready for it).
@@ -565,8 +563,6 @@ Follow-ups done since:
 - Packaging: `pyproject.toml` builds an abi3 wheel with maturin (`compas_fab_native`,
   a separate distribution in its own repository, as pydantic does with pydantic-core).
   Not yet: wheels for all platforms in the release workflow, and `compas_fab[native]`.
-- Sphere fitting still runs in Python (trimesh, at `set_robot_cell`: ~1.7 s for a UR5);
-  moving it to the core would drop the trimesh/rtree/scipy dependencies.
 
 ### Phase 0 leftovers
 

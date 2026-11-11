@@ -16,6 +16,8 @@ use serde::Deserialize;
 use motion_core::model::{Mat34, RobotModel, Scene};
 use motion_core::reference::{forward_kinematics, mul};
 
+pub mod spheres;
+
 #[derive(Deserialize)]
 struct MeshJson {
     #[serde(default)]

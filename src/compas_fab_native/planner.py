@@ -1,4 +1,4 @@
-"""Native motion core as a compas_fab planner (spike).
+"""Native motion core as a compas_fab planner.
 
 ``NativePlanner`` runs forward and inverse kinematics, collision checks, Cartesian and
 free-space planning in the Rust core (``compas_fab_native``). User code switches to it by
@@ -9,10 +9,9 @@ changing the planner:
     trajectory = planner.plan_cartesian_motion(waypoints, start_state)
     trajectory = planner.plan_motion(target, start_state)
 
-Limits of the spike: closed-form IK only (UR arms, spherical-wrist arms), so frame targets
-and Cartesian paths need a 6-axis arm; ``plan_motion`` to a ConfigurationTarget works for
-any serial robot. Obstacles are boxes or distance fields, attached tools are supported,
-attached workpieces are ignored.
+IK is closed-form where the robot has one (UR arms, spherical-wrist arms) and numerical
+otherwise. Obstacles are boxes or distance fields. What the robot carries (attached tools,
+the workpieces they hold, bodies attached to its links) collides like its links do.
 """
 
 import json

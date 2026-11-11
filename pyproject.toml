@@ -15,8 +15,7 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: CPython",
 ]
 dynamic = ["version"]
-# trimesh, rtree, scipy and networkx fit collision spheres to link meshes (Python side for now).
-dependencies = ["compas_fab>=2.1,<3", "numpy", "trimesh>=4", "rtree", "scipy", "networkx"]
+dependencies = ["compas_fab>=2.1,<3", "numpy"]
 
 [tool.maturin]
 manifest-path = "crates/motion_py/Cargo.toml"

@@ -1,4 +1,4 @@
-"""Describe a RobotCell for the native motion core (spike).
+"""Describe a RobotCell for the native motion core.
 
 The native core takes the robot as a kinematic tree plus sphere approximations, and the
 scene as oriented boxes. This module builds those descriptions from compas_fab objects:
@@ -7,13 +7,14 @@ scene as oriented boxes. This module builds those descriptions from compas_fab o
 * two sphere sets per link: conservative covering spheres for checks against obstacles,
   and spheres inscribed in the link meshes for self-collision (covering spheres of
   neighbouring links overlap permanently);
-* attached tools, as extra spheres on the end-effector link;
+* what the robot carries (attached tools, workpieces they hold, bodies attached to
+  moving links), as extra spheres on the links that carry them;
 * static rigid bodies, as oriented bounding boxes (conservative);
 * links that no joint of the planning group moves (e.g. the other bridge of a
   multi-robot cell), as static obstacles posed at the cell state's configuration. They
   are left out of the kinematic tree, which keeps large cells within the core's link cap.
 
-Sphere fitting needs numpy, and trimesh for the inscribed set.
+Sphere fitting runs in the core (``fit_sphere_sets``).
 """
 
 import hashlib
@@ -25,6 +26,8 @@ from typing import Optional
 import numpy as np
 from compas.geometry import Frame
 from compas.geometry import Transformation
+
+from . import _core
 
 JOINT_TYPES = {0: "revolute", 1: "continuous", 2: "prismatic", 3: "fixed"}
 MAX_SPHERES = 1024  # per robot, in the core (layout.rs)
@@ -91,120 +94,13 @@ def collision_items(collisions):
     return items
 
 
-def surface_points(tris, n_samples, rng):
-    """Area-weighted surface samples plus all vertices, so extremes are always covered."""
-    if len(tris) == 0:
-        return np.zeros((0, 3))
-    a, b, c = tris[:, 0], tris[:, 1], tris[:, 2]
-    areas = 0.5 * np.linalg.norm(np.cross(b - a, c - a), axis=1)
-    if areas.sum() <= 0:
-        return tris.reshape(-1, 3)
-    idx = rng.choice(len(tris), size=n_samples, p=areas / areas.sum())
-    r1 = np.sqrt(rng.random(n_samples))[:, None]
-    r2 = rng.random(n_samples)[:, None]
-    pts = (1 - r1) * a[idx] + r1 * (1 - r2) * b[idx] + r1 * r2 * c[idx]
-    return np.concatenate([pts, tris.reshape(-1, 3)])
-
-
-def fit_covering_spheres(points, target_radius, max_spheres, rng):
-    """k-means clusters, each enclosed by a sphere around its centroid (conservative)."""
-    if len(points) == 0:
-        return []
-    extent = np.ptp(points, axis=0).max()
-    k = int(np.clip(math.ceil(extent / (2 * target_radius)), 1, max_spheres))
-    k = min(k, len(points))
-    centers = points[rng.choice(len(points), size=k, replace=False)]
-    labels = np.zeros(len(points), dtype=int)
-    for _ in range(50):
-        labels = np.argmin(((points[:, None, :] - centers[None]) ** 2).sum(-1), axis=1)
-        new = np.array([points[labels == i].mean(0) if np.any(labels == i) else centers[i] for i in range(k)])
-        if np.allclose(new, centers):
-            break
-        centers = new
-    spheres = []
-    for i in range(k):
-        cluster = points[labels == i]
-        if len(cluster):
-            spheres.append((centers[i], float(np.linalg.norm(cluster - centers[i], axis=1).max())))
-    return spheres
-
-
-def watertight_trimesh(tris):
-    """One closed, outward-oriented trimesh from triangles.
-
-    None if trimesh is missing, or the mesh (or one of its components) is not closed or has
-    no volume once its normals are fixed.
-    """
-    try:
-        import trimesh
-    except ImportError:
-        return None
-    if len(tris) == 0:
-        return None
-    mesh = trimesh.Trimesh(tris.reshape(-1, 3), np.arange(len(tris) * 3).reshape(-1, 3), process=True)
-    if len(mesh.faces) == 0 or np.ptp(mesh.vertices, axis=0).min() < 1e-6:
-        return None  # flat or degenerate: no interior to inscribe spheres in
-    parts = [mesh] if mesh.is_watertight else mesh.split(only_watertight=False)
-    # Collision meshes often carry stray slivers (a couple of zero-area or zero-volume faces):
-    # drop components with fewer than 4 faces, keep the rest only if they are closed solids.
-    parts = [p for p in parts if len(p.faces) >= 4]
-    if not parts or not all(p.is_watertight for p in parts):
-        return None
-    with np.errstate(invalid="ignore", divide="ignore"):
-        for p in parts:
-            trimesh.repair.fix_normals(p)
-            if not np.isfinite(p.volume) or p.volume <= 1e-12:
-                return None
-    return parts[0] if len(parts) == 1 else trimesh.util.concatenate(parts)
-
-
-def fit_inscribed_spheres(mesh, tolerance, max_spheres, radii, rng):
-    """Greedy surface cover with spheres inside a watertight mesh.
-
-    Candidate centres are pushed inward from surface samples; each gets the largest radius
-    that stays inside (signed distance). A sample is covered within ``tolerance`` of a
-    sphere; candidates are picked greedily by newly covered samples.
-    """
-    import trimesh
-
-    pts, face_idx = trimesh.sample.sample_surface(mesh, 3000, seed=int(rng.integers(1 << 31)))
-    normals = mesh.face_normals[face_idx]
-    sub = rng.choice(len(pts), size=min(600, len(pts)), replace=False)
-    centers = np.concatenate([pts[sub] - r * normals[sub] for r in radii])
-    sd = trimesh.proximity.signed_distance(mesh, centers)  # positive inside
-    keep = sd > 0.002
-    centers, rs = centers[keep], np.minimum(sd[keep], max(radii))
-    if len(centers) == 0:
-        return []
-    dist = np.linalg.norm(pts[None, :, :] - centers[:, None, :], axis=2) - rs[:, None]
-    covers = dist <= tolerance
-    uncovered = np.ones(len(pts), dtype=bool)
-    chosen = []
-    while uncovered.any() and len(chosen) < max_spheres:
-        gain = (covers & uncovered[None, :]).sum(axis=1)
-        best = int(np.argmax(gain))
-        if gain[best] == 0:
-            break
-        chosen.append(best)
-        uncovered &= ~covers[best]
-    return [(centers[i], float(rs[i])) for i in chosen]
-
-
-def fit_sphere_sets(
-    tris,
-    rng,
-    sphere_radius=0.03,
-    max_spheres=16,
-    self_sphere_radius=0.03,
-    max_self_spheres=16,
-    tolerance=0.01,
-    obstacle_spheres="inscribed",
-    obstacle_padding=0.02,
-):
-    """(obstacle, self) sphere lists for one body given as triangles.
+def fit_sphere_sets(tris, seed, **options):
+    """``(obstacle spheres, self spheres, miss)`` for one body given as triangles, fitted
+    in the core (``motion_exact::spheres``). Spheres are ``(centre, radius)``.
 
     Self-collision always uses spheres inscribed in the mesh. For obstacles there are two
-    choices (measured on a UR5 against PyBullet and exact meshes, see SPIKE.md):
+    choices (``obstacle_spheres``, measured on a UR5 against PyBullet and exact meshes, see
+    SPIKE.md):
 
     * ``"inscribed"`` (default): the inscribed spheres grown by ``obstacle_padding``.
       ~1-2% false alarms, misses a few real contacts per thousand configurations at thin
@@ -212,43 +108,23 @@ def fit_sphere_sets(
     * ``"covering"``: k-means clusters enclosed by spheres. Never misses, but ~11% false
       alarms and spheres around joint housings poke through a floor the robot stands on.
 
-    Bodies without a watertight mesh fall back to covering spheres for both sets.
+    Bodies without a closed mesh fall back to covering spheres for both sets. ``miss`` is
+    how far the surface reaches outside the self spheres: the 95th percentile, over points
+    sampled on the surface, of the distance to the nearest sphere. A good fit is within
+    the fitting tolerance; a large flat body covered by a few inscribed spheres can miss by
+    metres.
+
+    Other options: ``sphere_radius`` and ``max_spheres`` (covering spheres),
+    ``self_sphere_radius`` and ``max_self_spheres`` (inscribed spheres), ``tolerance``
+    (how close to an inscribed sphere a surface point counts as covered).
     """
-    mesh = watertight_trimesh(tris)
-    covering = None
-    if mesh is None or obstacle_spheres == "covering":
-        covering = fit_covering_spheres(surface_points(tris, 2000, rng), sphere_radius, max_spheres, rng)
-    if mesh is None:
-        return covering, covering
-    radii = [self_sphere_radius * f for f in (0.5, 0.75, 1.0, 1.5, 2.0, 3.0)]
-    inscribed = fit_inscribed_spheres(mesh, tolerance, max_self_spheres, radii, rng)
-    if not inscribed:
-        covering = covering or fit_covering_spheres(surface_points(tris, 2000, rng), sphere_radius, max_spheres, rng)
-        return covering, covering
-    if obstacle_spheres == "covering":
-        return covering, inscribed
-    return [(c, r + obstacle_padding) for c, r in inscribed], inscribed
+    flat = np.ascontiguousarray(tris, dtype=float).reshape(-1).tolist()
+    obstacle, inscribed, miss = _core.fit_sphere_sets(flat, seed, **options)
+    as_arrays = lambda spheres: [(np.asarray(c, dtype=float), float(r)) for c, r in spheres]  # noqa: E731
+    return as_arrays(obstacle), as_arrays(inscribed), float(miss)
 
 
-def fit_miss(tris, spheres, rng, samples=2000):
-    """How far a body's surface reaches outside its spheres: the 95th percentile, over
-    points sampled on the surface, of the distance to the nearest sphere (0 inside one).
-    A good fit is within the fitting tolerance; a large flat body covered by a few
-    inscribed spheres can miss by metres."""
-    if not spheres:
-        return float("inf")
-    points = surface_points(tris, samples, rng)
-    centers = np.array([c for c, _ in spheres], dtype=float)
-    radii = np.array([r for _, r in spheres], dtype=float)
-    outside = np.full(len(points), np.inf)
-    for start in range(0, len(points), 512):
-        chunk = points[start : start + 512]
-        d = np.linalg.norm(chunk[:, None, :] - centers[None], axis=2) - radii[None]
-        outside[start : start + 512] = d.min(axis=1)
-    return float(np.percentile(np.maximum(outside, 0.0), 95))
-
-
-SPHERE_CACHE_VERSION = 2  # bump when the fitting changes, to invalidate cached spheres
+SPHERE_CACHE_VERSION = 3  # bump when the fitting changes, to invalidate cached spheres
 _sphere_cache = {}
 
 
@@ -268,8 +144,8 @@ def sphere_cache_dir():
 
 
 def cached_sphere_sets(tris, seed=0, **options):
-    """``fit_sphere_sets`` for one body, cached by its triangles and the options, with the
-    self-collision set's ``fit_miss``: ``(obstacle spheres, self spheres, miss)``.
+    """``fit_sphere_sets`` for one body, cached by its triangles and the options:
+    ``(obstacle spheres, self spheres, miss)``.
 
     The random stream is seeded from the mesh itself, so a body gets the same spheres
     whatever else is in the cell and in whichever order bodies are fitted. Results are kept
@@ -292,9 +168,7 @@ def cached_sphere_sets(tris, seed=0, **options):
         except (OSError, ValueError, TypeError):
             hit = None  # unreadable entry: fit again and overwrite it
     if hit is None:
-        rng = np.random.default_rng(int(key[:15], 16))
-        covering, inscribed = fit_sphere_sets(tris, rng, **options)
-        hit = (covering, inscribed, fit_miss(tris, inscribed, rng))
+        hit = fit_sphere_sets(tris, int(key[:16], 16), **options)
         if path:
             try:
                 os.makedirs(folder, exist_ok=True)
