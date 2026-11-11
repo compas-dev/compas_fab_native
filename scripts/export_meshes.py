@@ -8,8 +8,9 @@ Usage::
 import argparse
 import json
 
-from compas_fab_native.model import exact_robot_meshes
 from compas_fab.robots import RobotCellLibrary
+
+from compas_fab_native.model import exact_robot_meshes
 
 
 def main():

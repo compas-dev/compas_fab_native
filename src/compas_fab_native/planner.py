@@ -20,8 +20,6 @@ from typing import Optional
 import numpy as np
 from compas.geometry import Frame
 from compas.geometry import Transformation
-from compas_robots import Configuration
-
 from compas_fab.backends.exceptions import CollisionCheckError
 from compas_fab.backends.exceptions import InverseKinematicsError
 from compas_fab.backends.exceptions import MPNoIKSolutionError
@@ -47,6 +45,7 @@ from compas_fab.robots import JointTrajectoryPoint
 from compas_fab.robots import PointAxisTarget
 from compas_fab.robots import PointAxisWaypoints
 from compas_fab.robots import TargetMode
+from compas_robots import Configuration
 
 from ._core import NativeCore
 from .model import add_carried_objects

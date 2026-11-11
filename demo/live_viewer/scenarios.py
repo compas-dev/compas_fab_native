@@ -3,10 +3,22 @@ browser shows; the session streams whatever motion they plan."""
 
 import time
 
+import compas_fab
 import numpy as np
 from compas.geometry import Box
 from compas.geometry import Frame
 from compas.geometry import Torus
+from compas_fab.backends import UR5Kinematics
+from compas_fab.backends.exceptions import BackendError
+from compas_fab.backends.kinematics.exceptions import CartesianMotionError
+from compas_fab.robots import ConfigurationTarget
+from compas_fab.robots import FrameTarget
+from compas_fab.robots import FrameWaypoints
+from compas_fab.robots import PointAxisTarget
+from compas_fab.robots import RigidBody
+from compas_fab.robots import RigidBodyState
+from compas_fab.robots import RobotCellLibrary
+from compas_fab.robots import TargetMode
 from kin import Arm
 from scene import compas_mesh_tris
 from scene import frame_from_matrix
@@ -19,19 +31,7 @@ from scene import spiral_points
 from scene import target_marker_tris
 from scipy.spatial.transform import Rotation
 
-import compas_fab
-from compas_fab.backends import UR5Kinematics
-from compas_fab.backends.exceptions import BackendError
-from compas_fab.backends.kinematics.exceptions import CartesianMotionError
 from compas_fab_native import NativePlanner
-from compas_fab.robots import ConfigurationTarget
-from compas_fab.robots import FrameTarget
-from compas_fab.robots import FrameWaypoints
-from compas_fab.robots import PointAxisTarget
-from compas_fab.robots import RigidBody
-from compas_fab.robots import RigidBodyState
-from compas_fab.robots import RobotCellLibrary
-from compas_fab.robots import TargetMode
 
 DT = 1 / 60
 ACCENT = "#f2b705"

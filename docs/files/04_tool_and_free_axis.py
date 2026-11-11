@@ -10,13 +10,13 @@ import math
 import time
 
 from compas.geometry import Frame
-
 from compas_fab.backends import UR5Kinematics
 from compas_fab.backends.kinematics.exceptions import CartesianMotionError
-from compas_fab_native import NativePlanner
 from compas_fab.robots import FrameWaypoints
 from compas_fab.robots import RobotCellLibrary
 from compas_fab.robots import TargetMode
+
+from compas_fab_native import NativePlanner
 
 # 1. A UR5 with a cone-shaped tool. The tool is part of the collision model.
 robot_cell, state = RobotCellLibrary.ur5_cone_tool()

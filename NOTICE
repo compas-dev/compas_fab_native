@@ -101,6 +101,6 @@ follow the third-party works listed below. Their licenses are in `licenses/`.
      differentiates JAX code automatically, numik.rs writes the Jacobians out).
 
 
-Rust crates and Python packages used as dependencies keep their own licenses; see
-`Cargo.lock` (`cargo metadata`) and `pyproject.toml`. Wheels built for distribution must
-bundle their license texts (to do before the first release, e.g. with cargo-about).
+Rust crates compiled into the Python extension keep their own licenses; their texts are in
+`licenses/THIRD_PARTY_RUST.txt` (generated with cargo-about, see `about.toml`), which wheels
+ship. Python packages installed as dependencies (`pyproject.toml`) keep theirs.

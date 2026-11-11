@@ -2,23 +2,135 @@
 requires = ["maturin>=1.9,<2"]
 build-backend = "maturin"
 
+# ============================================================================
+# project info
+# ============================================================================
+
 [project]
 name = "compas_fab_native"
 description = "Native (Rust) planning backend for compas_fab: batched kinematics, collision checks, Cartesian and free-motion planning."
+keywords = ["robotics", "motion planning", "inverse kinematics", "collision checking", "compas", "compas_fab", "digital fabrication"]
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
 license-files = ["LICENSE", "NOTICE", "licenses/*.txt"]
 authors = [{ name = "Gramazio Kohler Research", email = "gramaziokohler@arch.ethz.ch" }]
 classifiers = [
-    "Programming Language :: Rust",
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Rust",
 ]
 dynamic = ["version"]
 dependencies = ["compas_fab>=2.1,<3", "numpy"]
+
+[project.optional-dependencies]
+dev = [
+    "bump-my-version",
+    "maturin >=1.9,<2",
+    "pytest",
+    "ruff",
+]
+docs = [
+    "markdown-callouts >=0.4",
+    "mike",
+    "mkdocs >=1.6",
+    "mkdocs-autorefs >=1.4",
+    "mkdocs-material >=9.5",
+    "mkdocstrings[python]",
+]
+
+[project.urls]
+Homepage = "https://compas.dev/compas_fab_native"
+Documentation = "https://compas.dev/compas_fab_native"
+Repository = "https://github.com/compas-dev/compas_fab_native"
+Changelog = "https://github.com/compas-dev/compas_fab_native/blob/main/CHANGELOG.md"
+Issues = "https://github.com/compas-dev/compas_fab_native/issues"
+Forum = "https://forum.compas-framework.org/"
+
+# ============================================================================
+# build (maturin): the version comes from crates/motion_py/Cargo.toml
+# ============================================================================
 
 [tool.maturin]
 manifest-path = "crates/motion_py/Cargo.toml"
 module-name = "compas_fab_native._core"
 python-source = "src"
 features = ["pyo3/extension-module"]
+
+# ============================================================================
+# tests
+# ============================================================================
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+# ============================================================================
+# linting and formatting
+# ============================================================================
+
+[tool.ruff]
+line-length = 179
+indent-width = 4
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["I001"]
+"tests/*" = ["I001", "E501"]
+
+[tool.ruff.lint.isort]
+force-single-line = true
+known-first-party = ["compas_fab_native"]
+
+[tool.ruff.lint.pycodestyle]
+max-doc-length = 179
+
+[tool.ruff.format]
+# Markdown code blocks hold mkdocs snippet includes (--8<--), not Python to format.
+exclude = ["*.md"]
+
+# ============================================================================
+# release (compas-dev/compas-actions: release-pr bumps these, release-check
+# allows a release to change only these files)
+# ============================================================================
+
+[tool.bumpversion]
+current_version = "0.0.0"
+message = "Bump version to {new_version}"
+commit = false
+tag = false
+
+[[tool.bumpversion.files]]
+filename = "crates/motion_py/Cargo.toml"
+search = "version = \"{current_version}\""
+replace = "version = \"{new_version}\""
+
+[[tool.bumpversion.files]]
+filename = "Cargo.lock"
+search = "name = \"motion_py\"\nversion = \"{current_version}\""
+replace = "name = \"motion_py\"\nversion = \"{new_version}\""
+
+[[tool.bumpversion.files]]
+filename = "src/compas_fab_native/__init__.py"
+search = "__version__ = \"{current_version}\""
+replace = "__version__ = \"{new_version}\""
+
+[[tool.bumpversion.files]]
+filename = "CHANGELOG.md"
+search = "Unreleased"
+replace = "[{new_version}] {now:%Y-%m-%d}"

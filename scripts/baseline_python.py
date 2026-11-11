@@ -22,7 +22,6 @@ import time
 import numpy as np
 from compas.geometry import Box
 from compas.geometry import Frame
-
 from compas_fab.backends import CollisionCheckError
 from compas_fab.backends import PyBulletClient
 from compas_fab.backends import PyBulletPlanner

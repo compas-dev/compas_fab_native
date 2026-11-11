@@ -1,0 +1,28 @@
+# cargo-about: license texts of the Rust crates compiled into the Python extension.
+#
+#   cargo about generate --locked -m crates/motion_py/Cargo.toml about.hbs -o licenses/THIRD_PARTY_RUST.txt
+#
+# CI regenerates the file and fails if it differs from the committed one.
+
+# In order of preference, for crates that offer a choice.
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+# The platforms wheels are built for.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+# Only what ends up in the wheel: no build tools, no test dependencies, not our own crates.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+private = { ignore = true }

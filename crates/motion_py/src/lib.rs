@@ -1,4 +1,4 @@
-//! Python bindings for the native motion core (spike).
+//! Python bindings for the native motion core.
 //!
 //! A thin layer: the robot model and scene come in as JSON (built on the Python side from
 //! a compas_fab RobotCell, see `compas_fab_native`), queries run in Rust with the

@@ -10,12 +10,12 @@ Install the core once with ``pip install .`` from a compas_fab checkout.
 import time
 
 from compas.geometry import Frame
-
 from compas_fab.backends import UR5Kinematics
-from compas_fab_native import NativePlanner
 from compas_fab.robots import FrameTarget
 from compas_fab.robots import RobotCellLibrary
 from compas_fab.robots import TargetMode
+
+from compas_fab_native import NativePlanner
 
 # 1. A robot cell: a UR5 on its own. `state` holds everything that moves: the robot's joint
 #    values, its base frame, tools and obstacles.
