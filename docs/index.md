@@ -54,7 +54,7 @@ Each example builds on the previous one and explains what the planner does as it
 - [`05_mesh_obstacles.py`](files/05_mesh_obstacles.py){: download="05_mesh_obstacles.py" }: plunging through a ring, impossible with bounding boxes, possible with a distance field
 - [`06_free_motion.py`](files/06_free_motion.py){: download="06_free_motion.py" }: free motion around obstacles, to configurations, frames and point-axis targets, timed under the joint limits, on a UR5 and a 7-axis Panda
 - [`07_any_6_axis_arm.py`](files/07_any_6_axis_arm.py){: download="07_any_6_axis_arm.py" }: an ABB IRB 4600 printing a spiral vase with no kinematics solver given, in closed form and with numerical IK
-- [`08_which_ik.py`](files/08_which_ik.py){: download="08_which_ik.py" }: which IK five robots get (ABB, Stäubli, UR5 with and without a solver, Panda), and how fast it is
+- [`08_which_ik.py`](files/08_which_ik.py){: download="08_which_ik.py" }: which IK five robots get (ABB, Stäubli, UR5 with and without a solver, Panda), and how many solutions each finds
 
 ## How it works, in short
 
