@@ -1,5 +1,13 @@
 # compas_fab_native
 
+[![Made with COMPAS](https://compas.dev/badge.svg)](https://compas.dev/mission-control/#compas_fab_native)
+[![CI](https://github.com/compas-dev/compas_fab_native/actions/workflows/ci.yml/badge.svg)](https://github.com/compas-dev/compas_fab_native/actions/workflows/ci.yml)
+[![Wheels](https://github.com/compas-dev/compas_fab_native/actions/workflows/wheels.yml/badge.svg)](https://github.com/compas-dev/compas_fab_native/actions/workflows/wheels.yml)
+[![PyPI](https://img.shields.io/pypi/v/compas_fab_native.svg)](https://pypi.org/project/compas_fab_native/)
+[![Python versions](https://img.shields.io/pypi/pyversions/compas_fab_native.svg)](https://pypi.org/project/compas_fab_native/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/compas-dev/compas_fab_native/blob/main/LICENSE)
+[![Documentation](https://img.shields.io/badge/docs-latest-brightgreen.svg)](https://compas.dev/compas_fab_native)
+
 A planning backend for [compas_fab](https://github.com/compas-dev/compas_fab) whose work
 happens in a compiled Rust core inside the Python process: no Docker, no PyBullet, no ROS.
 
