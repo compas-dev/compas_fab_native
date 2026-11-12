@@ -876,8 +876,74 @@ impl NativeCore {
     }
 }
 
+/// (obstacle spheres, self spheres, miss), spheres as (centre, radius).
+type SphereSetsOutput = (Vec<([f64; 3], f64)>, Vec<([f64; 3], f64)>, f64);
+
+/// Obstacle and self-collision spheres of one body (see `motion_exact::spheres`).
+///
+/// `triangles` is a flat list of 9 values per triangle. `seed` makes the fit reproducible.
+#[pyfunction]
+#[pyo3(signature = (
+    triangles,
+    seed,
+    sphere_radius = 0.03,
+    max_spheres = 16,
+    self_sphere_radius = 0.03,
+    max_self_spheres = 16,
+    tolerance = 0.01,
+    obstacle_spheres = "inscribed",
+    obstacle_padding = 0.02,
+))]
+#[allow(clippy::too_many_arguments)]
+fn fit_sphere_sets(
+    py: Python<'_>,
+    triangles: Vec<f64>,
+    seed: u64,
+    sphere_radius: f64,
+    max_spheres: usize,
+    self_sphere_radius: f64,
+    max_self_spheres: usize,
+    tolerance: f64,
+    obstacle_spheres: &str,
+    obstacle_padding: f64,
+) -> PyResult<SphereSetsOutput> {
+    if !triangles.len().is_multiple_of(9) {
+        return Err(PyValueError::new_err(format!(
+            "expected 9 values per triangle, got {}",
+            triangles.len()
+        )));
+    }
+    let obstacle_spheres = match obstacle_spheres {
+        "inscribed" => motion_exact::spheres::ObstacleSpheres::Inscribed,
+        "covering" => motion_exact::spheres::ObstacleSpheres::Covering,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "obstacle_spheres must be 'inscribed' or 'covering', not {other:?}"
+            )))
+        }
+    };
+    let options = motion_exact::spheres::FitOptions {
+        sphere_radius,
+        max_spheres,
+        self_sphere_radius,
+        max_self_spheres,
+        tolerance,
+        obstacle_spheres,
+        obstacle_padding,
+    };
+    let tris: Vec<motion_exact::spheres::Triangle> = triangles
+        .as_chunks::<9>()
+        .0
+        .iter()
+        .map(|t| [[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]])
+        .collect();
+    let sets = py.detach(|| motion_exact::spheres::fit_sphere_sets(&tris, seed, &options));
+    Ok((sets.obstacle, sets.self_spheres, sets.miss))
+}
+
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NativeCore>()?;
+    m.add_function(wrap_pyfunction!(fit_sphere_sets, m)?)?;
     Ok(())
 }

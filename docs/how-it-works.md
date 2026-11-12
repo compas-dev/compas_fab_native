@@ -65,13 +65,14 @@ A call such as `plan_motion` goes: `NativePlanner` → `NativeCore.plan_motion` 
    Obstacles reach the core as oriented boxes (`obstacle_boxes`, the smallest of a few
    candidate boxes), or, with `NativePlanner(obstacles="esdf")`, as a signed distance field
    built from their meshes, which keeps holes and concave shapes open.
-4. **Sphere fit** (`model.fit_sphere_sets`). Each link gets two sets:
+4. **Sphere fit** (`model.fit_sphere_sets`, which runs in the core: `motion_exact::spheres`).
+   Each link gets two sets:
    - *self-collision spheres*, inscribed in the mesh (spheres around neighbouring links
      would overlap permanently);
    - *obstacle spheres*, the same spheres grown by 2 cm.
 
-   Fits are scored with `fit_miss`, which measures how far the surface reaches outside
-   the spheres. They're cached in memory and on disk, keyed by the mesh and the options,
+   Fits are scored by how far the surface reaches outside the spheres (`miss`). Links
+   without a closed mesh get spheres that enclose clusters of surface points instead. They're cached in memory and on disk, keyed by the mesh and the options,
    so setting up the same cell again takes milliseconds (`cached_sphere_sets`).
 5. **Exact meshes**: every link and obstacle mesh also goes to `motion_exact`.
 
