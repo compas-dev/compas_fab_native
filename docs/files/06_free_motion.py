@@ -12,9 +12,7 @@ from compas.geometry import Box
 from compas.geometry import Frame
 from compas.geometry import Point
 from compas.geometry import Vector
-
 from compas_fab.backends import UR5Kinematics
-from compas_fab_native import NativePlanner
 from compas_fab.robots import ConfigurationTarget
 from compas_fab.robots import FrameTarget
 from compas_fab.robots import PointAxisTarget
@@ -22,6 +20,8 @@ from compas_fab.robots import RigidBody
 from compas_fab.robots import RigidBodyState
 from compas_fab.robots import RobotCellLibrary
 from compas_fab.robots import TargetMode
+
+from compas_fab_native import NativePlanner
 
 # 1. A UR5 with a wall in front of it.
 robot_cell, _ = RobotCellLibrary.ur5()

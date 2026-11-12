@@ -92,7 +92,7 @@ Aymeric Augustin and contributors).
 The robot meshes come from compas_fab's robot library:
 
 - **UR5:** Universal Robots' `ur_description` (ROS-Industrial), BSD-3-Clause; see
-  `src/compas_fab/data/robot_library/ur_description/LICENSE`.
+  `src/compas_fab/data/robot_library/ur_description/LICENSE` in compas_fab.
 - **Panda:** Franka Emika's `franka_description` (franka_ros), Apache-2.0.
 - **RFL:** the RFL description (hall, rails, bridges, carriages) of Gramazio Kohler
   Research, ETH Zurich, as shipped in compas_fab's robot library (`robot_library/rfl`,

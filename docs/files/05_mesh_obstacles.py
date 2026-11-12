@@ -11,15 +11,15 @@ import time
 
 from compas.geometry import Frame
 from compas.geometry import Torus
-
 from compas_fab.backends import UR5Kinematics
 from compas_fab.backends.kinematics.exceptions import CartesianMotionError
-from compas_fab_native import NativePlanner
 from compas_fab.robots import FrameWaypoints
 from compas_fab.robots import RigidBody
 from compas_fab.robots import RigidBodyState
 from compas_fab.robots import RobotCellLibrary
 from compas_fab.robots import TargetMode
+
+from compas_fab_native import NativePlanner
 
 # 1. A ring (50 cm across, tube 5 cm thick) lying flat in front of the robot. (Much
 #    narrower and the UR5's wrist only just fits: whether it passes then depends on details

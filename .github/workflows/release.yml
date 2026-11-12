@@ -1,0 +1,107 @@
+name: release
+
+# Runs on every push to main and does nothing unless the push is a merged release pull
+# request (see prepare-release.yml): then it builds and tests the wheels and the source
+# distribution, publishes them to PyPI, creates the GitHub release and deploys the docs.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Detect release merge
+    runs-on: ubuntu-latest
+    outputs:
+      is-release: ${{ steps.release.outputs.is-release }}
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - uses: compas-dev/compas-actions/release-check@v1
+        id: release
+
+  wheels:
+    needs: release
+    if: needs.release.outputs.is-release == 'true'
+    uses: ./.github/workflows/wheels.yml
+
+  collect:
+    name: Collect distributions
+    needs: [release, wheels]
+    if: needs.release.outputs.is-release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v5
+        with:
+          name: sdist
+          path: dist
+      - name: Check versions and metadata
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          ls -l dist
+          for f in dist/*; do
+            case "$(basename "$f")" in
+              compas_fab_native-"$VERSION"-*.whl|compas_fab_native-"$VERSION".tar.gz) ;;
+              *) echo "::error::$f is not version $VERSION"; exit 1 ;;
+            esac
+          done
+          test "$(ls dist/*.whl | wc -l)" -eq 3
+          pipx run twine check --strict dist/*
+      - uses: actions/upload-artifact@v5
+        with:
+          name: python-package-distributions
+          path: dist/
+
+  publish:
+    needs: [release, collect]
+    if: needs.release.outputs.is-release == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/compas_fab_native
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: python-package-distributions
+          path: dist
+      - name: Publish to PyPI (trusted publishing)
+        uses: pypa/gh-action-pypi-publish@v1.14.2
+
+  create-release:
+    needs: [release, publish]
+    if: needs.release.outputs.is-release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: compas-dev/compas-actions/github-release@v1
+        with:
+          github-token: ${{ github.token }}
+          tag-name: ${{ needs.release.outputs.tag }}
+          target: ${{ github.sha }}
+          release-name-prefix: COMPAS FAB Native
+
+  docs:
+    needs: [release, create-release]
+    if: needs.release.outputs.is-release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: compas-dev/compas-actions/docs@v1
+        with:
+          deploy: true
+          version: ${{ needs.release.outputs.version }}
+          extras: docs

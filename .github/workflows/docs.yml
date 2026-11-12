@@ -1,0 +1,24 @@
+name: docs
+
+# Builds the documentation on pull requests (strict: warnings fail). Releases deploy it,
+# see release.yml.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: compas-dev/compas-actions/docs@v1
+        with:
+          extras: docs

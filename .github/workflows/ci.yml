@@ -13,10 +13,44 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  lint-python:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.0.0
+      - name: Ruff
+        run: |
+          uvx ruff check
+          uvx ruff format --check
+
+  licenses:
+    # The license texts shipped in wheels must match Cargo.lock.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.3
+      - name: Regenerate licenses/THIRD_PARTY_RUST.txt
+        run: cargo about generate --locked -m crates/motion_py/Cargo.toml about.hbs -o licenses/THIRD_PARTY_RUST.txt
+      - name: Compare with the committed file
+        run: |
+          git diff --exit-code licenses/THIRD_PARTY_RUST.txt || {
+            echo "::error::licenses/THIRD_PARTY_RUST.txt is out of date: run the command in about.toml and commit the result"
+            exit 1
+          }
+
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
