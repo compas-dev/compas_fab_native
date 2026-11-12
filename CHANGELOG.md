@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Examples `07_any_6_axis_arm.py` (an ABB IRB 4600 printing a vase, no kinematics solver) and `08_which_ik.py` (which IK each robot gets).
 
 * `NativePlanner.has_closed_form_ik`: whether IK for the current robot cell is solved in closed form or numerically.
+* `examples/web_viewer`: a browser viewer (compas_threejs) to try IK, collision checks, free motions and straight lines on library robots or your own URDF.
 
 ### Changed
 
