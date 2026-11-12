@@ -1,0 +1,1151 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://compas.dev/compas_fab_native/api/">
+      
+      
+        <link rel="prev" href="../how-it-works/">
+      
+      
+        <link rel="next" href="../changelog/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../_logo/favicon.ico">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>API reference - COMPAS FAB Native</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../assets/stylesheets/custom.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#api-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="https://compas.dev/compas_fab_native/" title="COMPAS FAB Native" class="md-header__button md-logo" aria-label="COMPAS FAB Native" data-md-component="logo">
+      
+  <img src="../_logo/compas_logo_white_transparent.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            COMPAS FAB Native
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              API reference
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/compas-dev/compas_fab_native" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    compas-dev/compas_fab_native
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="https://compas.dev/compas_fab_native/" title="COMPAS FAB Native" class="md-nav__button md-logo" aria-label="COMPAS FAB Native" data-md-component="logo">
+      
+  <img src="../_logo/compas_logo_white_transparent.png" alt="logo">
+
+    </a>
+    COMPAS FAB Native
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/compas-dev/compas_fab_native" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    compas-dev/compas_fab_native
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../how-it-works/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How it works
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API reference
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#compas_fab_native.NativePlanner" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NativePlanner
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="NativePlanner">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#compas_fab_native.NativePlanner.poorly_fitted_links" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        poorly_fitted_links
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compas_fab_native.NativePlanner.check_collision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        check_collision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compas_fab_native.NativePlanner.iter_inverse_kinematics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        iter_inverse_kinematics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compas_fab_native.NativePlanner.plan_cartesian_motion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plan_cartesian_motion
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compas_fab_native.NativePlanner.plan_motion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plan_motion
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#compas_fab_native.NativeClient" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NativeClient
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../license/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    License
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#compas_fab_native.NativePlanner" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NativePlanner
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="NativePlanner">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#compas_fab_native.NativePlanner.poorly_fitted_links" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        poorly_fitted_links
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compas_fab_native.NativePlanner.check_collision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        check_collision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compas_fab_native.NativePlanner.iter_inverse_kinematics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        iter_inverse_kinematics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compas_fab_native.NativePlanner.plan_cartesian_motion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plan_cartesian_motion
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compas_fab_native.NativePlanner.plan_motion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plan_motion
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#compas_fab_native.NativeClient" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NativeClient
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="api-reference">API reference<a class="headerlink" href="#api-reference" title="Permanent link">¤</a></h1>
+<p><code>compas_fab_native</code> is a compas_fab backend: you use it through the regular compas_fab
+planner API (<code>set_robot_cell</code>, <code>inverse_kinematics</code>, <code>check_collision</code>,
+<code>plan_cartesian_motion</code>, <code>plan_motion</code>, ...). The pages of compas_fab document those calls;
+this page covers what is specific to the native backend: its constructor options and the
+planner options it understands.</p>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h2 id="compas_fab_native.NativePlanner" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">compas_fab_native.NativePlanner</span>
+
+
+<a href="#compas_fab_native.NativePlanner" class="headerlink" title="Permanent link">¤</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">NativePlanner</span><span class="p">(</span><span class="n">kinematics_solver</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">sphere_options</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Optional" href="https://docs.python.org/3/library/typing.html#typing.Optional">Optional</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#dict">dict</a></span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">exact</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/functions.html#bool">bool</a></span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span> <span class="n">obstacles</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#str">str</a></span> <span class="o">=</span> <span class="s1">'boxes'</span><span class="p">,</span> <span class="n">esdf_options</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Optional" href="https://docs.python.org/3/library/typing.html#typing.Optional">Optional</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#dict">dict</a></span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">exact_links</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+            <p class="doc doc-class-bases">
+              Bases: <code><a class="autorefs autorefs-external" title="compas_fab.backends.interfaces.backend_features.SetRobotCell" href="https://compas.dev/compas_fab/latest/api/compas_fab.backends.interfaces/#compas_fab.backends.interfaces.SetRobotCell">SetRobotCell</a></code>, <code><a class="autorefs autorefs-external" title="compas_fab.backends.interfaces.backend_features.SetRobotCellState" href="https://compas.dev/compas_fab/latest/api/compas_fab.backends.interfaces/#compas_fab.backends.interfaces.SetRobotCellState">SetRobotCellState</a></code>, <code><a class="autorefs autorefs-external" title="compas_fab.backends.interfaces.backend_features.ForwardKinematics" href="https://compas.dev/compas_fab/latest/api/compas_fab.backends.interfaces/#compas_fab.backends.interfaces.ForwardKinematics">ForwardKinematics</a></code>, <code><a class="autorefs autorefs-external" title="compas_fab.backends.interfaces.backend_features.InverseKinematics" href="https://compas.dev/compas_fab/latest/api/compas_fab.backends.interfaces/#compas_fab.backends.interfaces.InverseKinematics">InverseKinematics</a></code>, <code><a class="autorefs autorefs-external" title="compas_fab.backends.interfaces.backend_features.CheckCollision" href="https://compas.dev/compas_fab/latest/api/compas_fab.backends.interfaces/#compas_fab.backends.interfaces.CheckCollision">CheckCollision</a></code>, <code><a class="autorefs autorefs-external" title="compas_fab.backends.interfaces.backend_features.PlanCartesianMotion" href="https://compas.dev/compas_fab/latest/api/compas_fab.backends.interfaces/#compas_fab.backends.interfaces.PlanCartesianMotion">PlanCartesianMotion</a></code>, <code><a class="autorefs autorefs-external" title="compas_fab.backends.interfaces.backend_features.PlanMotion" href="https://compas.dev/compas_fab/latest/api/compas_fab.backends.interfaces/#compas_fab.backends.interfaces.PlanMotion">PlanMotion</a></code>, <code><a class="autorefs autorefs-external" title="compas_fab.backends.interfaces.PlannerInterface" href="https://compas.dev/compas_fab/latest/api/compas_fab.backends.interfaces/#compas_fab.backends.interfaces.PlannerInterface">PlannerInterface</a></code></p>
+
+
+
+        <p>Planner backed by the native (Rust) motion core.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>kinematics_solver</code></b>
+          –
+          <div class="doc-md-description">
+            <p>compas_fab analytical solver of the robot (e.g. <code>UR5Kinematics()</code>); its parameters
+are handed to the core's closed-form IK.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>sphere_options</code></b>
+              (<code><a class="autorefs autorefs-external" title="typing.Optional" href="https://docs.python.org/3/library/typing.html#typing.Optional">Optional</a>[<a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#dict">dict</a>]</code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>Sphere fitting options (see <code>model.fit_sphere_sets</code>).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>exact</code></b>
+              (<code><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/functions.html#bool">bool</a></code>, default:
+                  <code>True</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>Keep the exact collision meshes in the core. Planned Cartesian paths are then
+validated on the meshes (parry3d) after the sphere search, and the search continues
+until the path is collision-free under both models. Default True.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>obstacles</code></b>
+              (<code><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#str">str</a></code>, default:
+                  <code>&#39;boxes&#39;</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>How the sphere search sees static rigid bodies: <code>"boxes"</code> (oriented bounding boxes,
+default) or <code>"esdf"</code> (a signed distance field of their meshes; bodies with touch
+links, like a floor, stay boxes).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>esdf_options</code></b>
+              (<code><a class="autorefs autorefs-external" title="typing.Optional" href="https://docs.python.org/3/library/typing.html#typing.Optional">Optional</a>[<a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#dict">dict</a>]</code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p><code>voxel</code> (0.02 m), <code>truncation</code> (0.3 m) and <code>margin</code> (0.01 m) of the ESDF.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>exact_links</code></b>
+          –
+          <div class="doc-md-description">
+            <p>Links to check on their exact geometry inside planning too, not only in the final
+exact check: <code>None</code> (default), <code>"auto"</code> (the links spheres represent poorly,
+see <code>poorly_fitted_links</code>) or a list of link names. They are tested as convex
+hulls (conservative) against each other and the scene's boxes, on every
+configuration the spheres find free. Useful when the final check keeps rejecting
+paths near large flat links (a gantry carriage); it slows planning down, and the
+hulls take free space away. Needs <code>exact=True</code>.</p>
+          </div>
+        </li>
+    </ul>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="compas_fab_native.NativePlanner.poorly_fitted_links" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">poorly_fitted_links</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#compas_fab_native.NativePlanner.poorly_fitted_links" class="headerlink" title="Permanent link">¤</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">poorly_fitted_links</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Links whose collision spheres miss their mesh by more than
+<code>model.EXACT_LINK_MISS</code> (95th percentile): the spheres cannot represent them (a
+gantry carriage, a tall base), so collisions with them are only caught by the
+exact check. See the <code>exact_links</code> option.</p>
+
+    </div>
+
+</div>
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="compas_fab_native.NativePlanner.check_collision" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">check_collision</span>
+
+
+<a href="#compas_fab_native.NativePlanner.check_collision" class="headerlink" title="Permanent link">¤</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">check_collision</span><span class="p">(</span><span class="n">robot_cell_state</span><span class="p">,</span> <span class="n">options</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Collision check on the sphere model, or on the exact meshes with <code>options["exact"]</code>.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="compas_fab_native.NativePlanner.iter_inverse_kinematics" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">iter_inverse_kinematics</span>
+
+
+<a href="#compas_fab_native.NativePlanner.iter_inverse_kinematics" class="headerlink" title="Permanent link">¤</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">iter_inverse_kinematics</span><span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="n">robot_cell_state</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">options</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>IK solutions of a <code>FrameTarget</code> or <code>PointAxisTarget</code>, collision-free unless
+<code>options["check_collision"]</code> is False.</p>
+<p>Robots with a closed form (<code>kinematics_solver</code>, or a spherical wrist the core
+derives one for) get all of its solutions; for a <code>PointAxisTarget</code>, those of
+<code>axis_samples</code> rotations about the axis. Other robots (redundant arms, external
+axes) use the core's numerical IK, which treats the rotation about a point-axis
+target's axis as free.</p>
+
+
+<details class="options" open>
+  <summary>Options</summary>
+  <p>check_collision : bool
+    Only collision-free solutions (sphere model). Default True.
+ik : str
+    <code>"auto"</code> (default: closed form if there is one), <code>"numeric"</code> or <code>"analytic"</code>.
+max_results : int
+    Numerical IK: distinct solutions at most. Default 8.
+seed : int
+    Numerical IK: offset of the random seeds. Default 0. The state's configuration
+    is always tried first.
+axis_samples : int
+    Closed form, point-axis targets: rotations sampled about the axis. Default 16.</p>
+</details>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="compas_fab_native.NativePlanner.plan_cartesian_motion" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">plan_cartesian_motion</span>
+
+
+<a href="#compas_fab_native.NativePlanner.plan_cartesian_motion" class="headerlink" title="Permanent link">¤</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">plan_cartesian_motion</span><span class="p">(</span><span class="n">waypoints</span><span class="p">,</span> <span class="n">start_state</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">options</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Cartesian path through <code>FrameWaypoints</code> or <code>PointAxisWaypoints</code>.</p>
+<p>The tool moves in straight lines between waypoints: frames are interpolated every
+<code>max_step</code> metres and <code>max_step_angle</code> radians (like MoveIt and PyBullet), and the
+trajectory has one point per interpolated frame, passing through every waypoint.</p>
+<p>Robots with a closed form plan over all IK branches at once (layered graph search).
+Other robots (redundant arms, external axes) follow the path with numerical IK from
+several starting solutions and keep the cheapest that stays collision-free.
+Point-axis waypoints leave the rotation about the axis free: continuously with
+numerical IK, sampled (<code>free_axis_samples</code>) with the closed form.</p>
+
+
+<details class="options" open>
+  <summary>Options</summary>
+  <p>max_step : float
+    Largest distance between interpolated frames, metres. Default 0.01. 0 or None:
+    the waypoints only. <code>max_step_distance</code> is accepted as an alias.
+max_step_angle : float
+    Largest rotation between interpolated frames, radians. Default 0.1.
+free_axis_samples : int
+    Closed form: rotations about the tool axis sampled per waypoint. Default 1 for
+    frame waypoints (the frames as given), 16 for point-axis waypoints.
+free_axis_range : float
+    Half-range of that rotation in radians. Default pi.
+ik : str
+    <code>"auto"</code> (default: closed form if there is one), <code>"numeric"</code> or <code>"analytic"</code>.
+tracks : int
+    Numerical IK: starting solutions followed along the path. Default 8.
+seed : int
+    Numerical IK: offset of the random seeds. Default 0.
+max_joint_step : float
+    Largest joint change between consecutive frames (rad, or m for prismatic
+    joints). Default 0.5.
+start_from_state : bool
+    Begin the path at <code>start_state</code>'s configuration. Default False (any IK branch).
+exact_check : bool
+    Validate the path on the exact meshes (needs <code>NativePlanner(exact=True)</code>). Default True.</p>
+</details>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="compas_fab_native.NativePlanner.plan_motion" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">plan_motion</span>
+
+
+<a href="#compas_fab_native.NativePlanner.plan_motion" class="headerlink" title="Permanent link">¤</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">plan_motion</span><span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="n">start_state</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">options</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Collision-free joint-space motion from <code>start_state</code> to <code>target</code>.</p>
+<p>The straight joint-space motion is tried first, then RRT-Connect from the start and
+from every goal at once, then shortcutting and B-spline smoothing. The result is
+checked on the exact meshes and re-planned with another seed if it touches them.</p>
+
+
+<details class="targets" open>
+  <summary>Targets</summary>
+  <p>ConfigurationTarget
+    One goal.
+FrameTarget
+    Every IK solution is a goal; the planner picks whichever it reaches.
+PointAxisTarget
+    IK solutions of <code>axis_samples</code> rotations about the axis.</p>
+</details>
+
+<details class="options" open>
+  <summary>Options</summary>
+  <p>range : float
+    Longest tree extension, in joint-space distance. Default 1.0.
+resolution : float
+    Collision checks per unit of joint-space distance. Default: enough that no robot
+    sphere moves more than about 2 cm between checks (<code>core.default_resolution</code>).
+max_iterations : int
+    Default 100000.
+seed : int
+    Sampling sequence offset, for different (reproducible) paths. Default 0.
+simplify : bool
+    Shortcut and smooth the path. Default True.
+exact_check : bool
+    Validate the path on the exact meshes. Default True.
+exact_step : float
+    Largest joint change between exact checks (rad). Default 0.02.
+axis_samples : int
+    Rotations sampled about a PointAxisTarget's axis. Default 16.
+time_parameterization : bool
+    Time the path under joint velocity and acceleration limits (TOPP-RA), with
+    blended corners, starting and ending at rest. Points then carry
+    <code>time_from_start</code>, velocities and accelerations. Default True.
+velocity_scaling, acceleration_scaling : float
+    Fractions of the limits to use. Default 1.0.
+max_acceleration : float or list
+    Joint acceleration limits (URDFs carry none). Default: twice each joint's
+    velocity limit, i.e. full speed in half a second.
+blend_tolerance : float
+    Largest joint-space deviation of a blended corner from the planned path.
+    Blends that collide shrink, down to a stop at that corner. Default 0.05.
+time_step : float
+    Sampling period of the timed trajectory in seconds. Default 0.01.
+max_joint_step : float
+    Without time parameterization: interpolate the path so no joint moves more than
+    this between points. Default: the path's vertices only.</p>
+</details>
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h2 id="compas_fab_native.NativeClient" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">compas_fab_native.NativeClient</span>
+
+
+<a href="#compas_fab_native.NativeClient" class="headerlink" title="Permanent link">¤</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">NativeClient</span><span class="p">()</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents first">
+            <p class="doc doc-class-bases">
+              Bases: <code><a class="autorefs autorefs-external" title="compas_fab.backends.interfaces.ClientInterface" href="https://compas.dev/compas_fab/latest/api/compas_fab.backends.interfaces/#compas_fab.backends.interfaces.ClientInterface">ClientInterface</a></code></p>
+
+
+
+        <p>Holds the robot cell, its state and the Rust core built from them.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../how-it-works/" class="md-footer__link md-footer__link--prev" aria-label="Previous: How it works">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                How it works
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../changelog/" class="md-footer__link md-footer__link--next" aria-label="Next: Changelog">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Changelog
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026, Gramazio Kohler Research
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "navigation.footer", "navigation.indexes", "navigation.sections", "navigation.top", "search.highlight", "search.suggest", "toc.follow"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>

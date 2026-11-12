@@ -4,13 +4,14 @@
 free-space planning in the Rust core (``compas_fab_native``). User code switches to it by
 changing the planner:
 
-    planner = NativePlanner(UR5Kinematics())
+    planner = NativePlanner()
     planner.set_robot_cell(robot_cell, robot_cell_state)
     trajectory = planner.plan_cartesian_motion(waypoints, start_state)
     trajectory = planner.plan_motion(target, start_state)
 
-IK is closed-form where the robot has one (UR arms, spherical-wrist arms) and numerical
-otherwise. Obstacles are boxes or distance fields. What the robot carries (attached tools,
+IK is closed-form where the robot has one and numerical otherwise. Spherical-wrist arms
+get a closed form built from the robot model; UR arms get one when their compas_fab solver
+is passed (``NativePlanner(UR5Kinematics())``). Obstacles are boxes or distance fields. What the robot carries (attached tools,
 the workpieces they hold, bodies attached to its links) collides like its links do.
 """
 
