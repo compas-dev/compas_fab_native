@@ -4,13 +4,14 @@
 free-space planning in the Rust core (``compas_fab_native``). User code switches to it by
 changing the planner:
 
-    planner = NativePlanner(UR5Kinematics())
+    planner = NativePlanner()
     planner.set_robot_cell(robot_cell, robot_cell_state)
     trajectory = planner.plan_cartesian_motion(waypoints, start_state)
     trajectory = planner.plan_motion(target, start_state)
 
-IK is closed-form where the robot has one (UR arms, spherical-wrist arms) and numerical
-otherwise. Obstacles are boxes or distance fields. What the robot carries (attached tools,
+IK is closed-form where the robot has one and numerical otherwise. Spherical-wrist arms
+get a closed form built from the robot model; UR arms get one when their compas_fab solver
+is passed (``NativePlanner(UR5Kinematics())``). Obstacles are boxes or distance fields. What the robot carries (attached tools,
 the workpieces they hold, bodies attached to its links) collides like its links do.
 """
 
@@ -93,7 +94,8 @@ class NativePlanner(
     ----------
     kinematics_solver
         compas_fab analytical solver of the robot (e.g. ``UR5Kinematics()``); its parameters
-        are handed to the core's closed-form IK.
+        are handed to the core's closed-form IK. Optional: spherical-wrist arms get a closed
+        form without it, other robots get numerical IK (see ``has_closed_form_ik``).
     sphere_options
         Sphere fitting options (see ``model.fit_sphere_sets``).
     exact
@@ -141,6 +143,17 @@ class NativePlanner(
         self._has_static_links = False
         self._static_cache = None
         self._moving = None
+
+    @property
+    def has_closed_form_ik(self) -> bool:
+        """True if IK for the current robot cell is solved in closed form, False if numerically.
+
+        Known once the robot cell is set. Closed form: the ``kinematics_solver`` given, or a
+        spherical-wrist arm recognised from the robot model.
+        """
+        if self.client.core is None:
+            raise ValueError("Set a robot cell first.")
+        return self.client.core.has_analytic_ik
 
     # -- SetRobotCell / SetRobotCellState ---------------------------------------------
 

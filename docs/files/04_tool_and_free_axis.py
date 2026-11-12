@@ -1,13 +1,11 @@
-"""04 - A tool, and letting it turn about its own axis.
+"""04 - A tool that may turn about its own axis.
 
-For many processes (milling, gluing, drilling, 3D printing) the rotation of the tool about
-its own axis does not matter. Fixing it anyway throws away solutions: the robot may be
-unable to follow a path with the tool turned one way, but fine with it turned another.
-`free_axis_samples` lets the planner choose that rotation at every waypoint.
+For milling, gluing, drilling or printing, how the tool is turned about its axis does not
+matter. Fixing it anyway can make a path impossible. `free_axis_samples` lets the planner
+choose that rotation at every waypoint.
 """
 
 import math
-import time
 
 from compas.geometry import Frame
 from compas_fab.backends import UR5Kinematics
@@ -18,42 +16,35 @@ from compas_fab.robots import TargetMode
 
 from compas_fab_native import NativePlanner
 
-# 1. A UR5 with a cone-shaped tool. The tool is part of the collision model.
+# A UR5 with a cone-shaped tool. The tool collides like a link.
 robot_cell, state = RobotCellLibrary.ur5_cone_tool()
 planner = NativePlanner(UR5Kinematics())
 planner.set_robot_cell(robot_cell, state)
 
-# 2. A spiral traced by the tool tip, 2.5 turns going down, like a print or a milling pass.
-#    Each frame's x-axis points along the path (TargetMode.TOOL: frames are for the tool's TCF),
-#    so taken literally the tool must spin 2.5 times about its axis. The last wrist joint
-#    cannot turn that far.
+# A spiral of 2.5 turns, going down. Each frame's x-axis follows the path and z points
+# down, so the tool would spin 2.5 times: more than the last joint can turn.
 frames = []
 for i in range(181):
     t = 2.5 * 2 * math.pi * i / 180
     point = [0.4 + 0.12 * math.cos(t), 0.12 * math.sin(t), 0.3 - 0.1 * i / 180]
     tangent = [-math.sin(t), math.cos(t), 0]
-    # x along the path, z (the tool axis) pointing down.
     frames.append(Frame(point, tangent, [math.cos(t), math.sin(t), 0]))
-waypoints = FrameWaypoints(frames, TargetMode.TOOL)
+waypoints = FrameWaypoints(frames, TargetMode.TOOL)  # frames for the tool tip
 
-# 3. With the tool rotation fixed as given in the frames.
+# Rotation fixed as in the frames: no path.
 try:
     planner.plan_cartesian_motion(waypoints, state)
     print("fixed rotation: found a path")
 except CartesianMotionError:
     print("fixed rotation: no path")
 
-# 4. With 12 rotations about the tool axis to choose from at every waypoint, the planner
-#    can keep the tool from winding up.
-t0 = time.perf_counter()
+# 12 rotations to choose from at every waypoint: the tool no longer winds up.
 trajectory = planner.plan_cartesian_motion(waypoints, state, options={"free_axis_samples": 12})
-print("free rotation: {} points in {:.1f} ms".format(len(trajectory.points), (time.perf_counter() - t0) * 1e3))
+print("free rotation: {} points".format(len(trajectory.points)))
 
 
-# 5. The tip follows the path exactly; only the rotation about the tool axis changed.
-#    (The planner adds frames between waypoints more than 1 cm apart, the `max_step`
-#    option, so there are more points than waypoints: each lies on the straight segment
-#    between two waypoints.)
+# The tip still follows the path: compare it with the nearest waypoint segment.
+# (There are more points than waypoints: the planner adds one every 1 cm, `max_step`.)
 def distance_to_path(p):
     best = float("inf")
     for a, b in zip(frames, frames[1:]):
@@ -68,6 +59,5 @@ check = state.copy()
 worst = 0.0
 for point in trajectory.points:
     check.robot_configuration = robot_cell.zero_configuration().merged(point)
-    tcf = planner.forward_kinematics(check, TargetMode.TOOL)
-    worst = max(worst, distance_to_path(tcf.point))
+    worst = max(worst, distance_to_path(planner.forward_kinematics(check, TargetMode.TOOL).point))
 print("largest tip distance from the path: {:.1e} m".format(worst))
