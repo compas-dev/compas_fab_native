@@ -11,8 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * Examples `07_any_6_axis_arm.py` (an ABB IRB 4600 printing a vase, no kinematics solver) and `08_which_ik.py` (which IK each robot gets).
 
+* `NativePlanner.has_closed_form_ik`: whether IK for the current robot cell is solved in closed form or numerically.
+
 ### Changed
 
+* Examples are shorter: no timing code, simpler comments.
 * The README and the planner docstring show `NativePlanner()` with any robot; the UR solver is an option for UR arms.
 * Copyright year is 2026.
 

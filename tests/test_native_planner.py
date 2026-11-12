@@ -126,6 +126,19 @@ def test_exact_final_pass_and_exact_check(ur5):
         planner.check_collision(folded, {"exact": True})
 
 
+@pytest.mark.parametrize(
+    "factory, solver, closed_form",
+    [("abb_irb4600_40_255", None, True), ("ur5", UR5Kinematics(), True), ("ur5", None, False), ("panda", None, False)],
+)
+def test_has_closed_form_ik(factory, solver, closed_form):
+    cell, state = getattr(RobotCellLibrary, factory)(load_geometry=False)
+    planner = NativePlanner(solver)
+    with pytest.raises(ValueError):
+        planner.has_closed_form_ik
+    planner.set_robot_cell(cell, state)
+    assert planner.has_closed_form_ik is closed_form
+
+
 @pytest.mark.parametrize("factory", ["abb_irb4600_40_255", "staubli_tx2_60l"])
 def test_spherical_wrist_robots_without_a_solver(factory):
     """The closed form for spherical-wrist arms is derived from the robot model."""

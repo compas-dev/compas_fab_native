@@ -94,7 +94,8 @@ class NativePlanner(
     ----------
     kinematics_solver
         compas_fab analytical solver of the robot (e.g. ``UR5Kinematics()``); its parameters
-        are handed to the core's closed-form IK.
+        are handed to the core's closed-form IK. Optional: spherical-wrist arms get a closed
+        form without it, other robots get numerical IK (see ``has_closed_form_ik``).
     sphere_options
         Sphere fitting options (see ``model.fit_sphere_sets``).
     exact
@@ -142,6 +143,17 @@ class NativePlanner(
         self._has_static_links = False
         self._static_cache = None
         self._moving = None
+
+    @property
+    def has_closed_form_ik(self) -> bool:
+        """True if IK for the current robot cell is solved in closed form, False if numerically.
+
+        Known once the robot cell is set. Closed form: the ``kinematics_solver`` given, or a
+        spherical-wrist arm recognised from the robot model.
+        """
+        if self.client.core is None:
+            raise ValueError("Set a robot cell first.")
+        return self.client.core.has_analytic_ik
 
     # -- SetRobotCell / SetRobotCellState ---------------------------------------------
 
