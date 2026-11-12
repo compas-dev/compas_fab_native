@@ -110,7 +110,7 @@ exclude = ["*.md"]
 # ============================================================================
 
 [tool.bumpversion]
-current_version = "0.0.0"
+current_version = "0.1.0"
 message = "Bump version to {new_version}"
 commit = false
 tag = false

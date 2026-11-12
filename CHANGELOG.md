@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Removed
+
+
+## [0.1.0] 2026-11-12
+
+### Added
+
 * `NativePlanner` and `NativeClient`: a compas_fab planning backend on a compiled (Rust) core, moved here from the `compas_fab` spike branch with its history.
 * Forward kinematics, and inverse kinematics for frame and point-axis targets: closed form for UR arms and spherical-wrist arms (derived from the robot model), numerical and collision-aware for any other serial robot.
 * `check_collision` on the sphere model or on the exact meshes, including tools and workpieces the robot carries.
