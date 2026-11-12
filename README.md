@@ -58,6 +58,9 @@ More examples are in [`docs/files/`](docs/files), among them
 [`07_any_6_axis_arm.py`](docs/files/07_any_6_axis_arm.py) (an ABB printing a vase) and
 [`08_which_ik.py`](docs/files/08_which_ik.py) (which IK five robots get).
 
+To try it interactively, [`examples/web_viewer/`](examples/web_viewer) is a browser viewer:
+pick a library robot or load your own URDF, drag a target, and plan around boxes you place.
+
 ## Repository layout
 
 | Path | Contents |
@@ -66,7 +69,8 @@ More examples are in [`docs/files/`](docs/files), among them
 | `src/compas_fab_native/` | The compas_fab backend: `NativePlanner` and the robot model translation |
 | `tests/` | Python tests of the backend; the Rust tests live in each crate |
 | `docs/` | Documentation, examples and diagrams |
-| `demo/live_viewer/` | Live browser demo |
+| `examples/web_viewer/` | Browser viewer to try every feature on any robot |
+| `demo/live_viewer/` | Live browser demo with fixed scenarios |
 | `scripts/`, `fixtures/`, `results/` | Benchmark tooling, robot and scene data, and recorded results |
 
 ## Development

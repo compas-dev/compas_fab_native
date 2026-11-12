@@ -56,6 +56,11 @@ Each example builds on the previous one and explains what the planner does as it
 - [`07_any_6_axis_arm.py`](files/07_any_6_axis_arm.py){: download="07_any_6_axis_arm.py" }: an ABB IRB 4600 printing a spiral vase with no kinematics solver given, in closed form and with numerical IK
 - [`08_which_ik.py`](files/08_which_ik.py){: download="08_which_ik.py" }: which IK five robots get (ABB, Stäubli, UR5 with and without a solver, Panda), and how many solutions each finds
 
+To try it interactively, the
+[web viewer](https://github.com/compas-dev/compas_fab_native/tree/main/examples/web_viewer)
+runs in your browser: pick a library robot or load your own URDF, drag a target, and plan
+around boxes you place.
+
 ## How it works, in short
 
 The full explanation, with diagrams, is in [How it works](how-it-works.md).
